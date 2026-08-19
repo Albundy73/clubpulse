@@ -1,9 +1,17 @@
 import type { Club, Competition, Match, Team } from "@/lib/types";
 
-const SOURCE_URL = "https://scfarense.pt/calendario.php";
-const PROVIDER = "scfarense-official";
+const SOURCE_URL = "https://www.scfarense.pt/calendario";
+const PROVIDER = "sc-farense-official";
 
-export type LiveSourcePayload = {
+type Fixture = {
+  date: string;
+  time: string;
+  home: string;
+  away: string;
+  round: string;
+};
+
+type FarenseFeed = {
   clubs: Club[];
   teams: Team[];
   competitions: Competition[];
@@ -17,26 +25,26 @@ function decodeHtml(value: string) {
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
+    .replace(/&#39;|&apos;/gi, "'")
     .replace(/&aacute;/gi, "á")
     .replace(/&eacute;/gi, "é")
     .replace(/&iacute;/gi, "í")
     .replace(/&oacute;/gi, "ó")
     .replace(/&uacute;/gi, "ú")
     .replace(/&atilde;/gi, "ã")
+    .replace(/&otilde;/gi, "õ")
     .replace(/&ccedil;/gi, "ç");
 }
 
-function htmlToLines(html: string) {
+function htmlToText(html: string) {
   return decodeHtml(
     html
-      .replace(/<script[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, "\n"),
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
   )
-    .split(/\r?\n/)
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function slugify(value: string) {
@@ -48,84 +56,75 @@ function slugify(value: string) {
     .replace(/^-|-$/g, "");
 }
 
-function toLocalIso(dateText: string, timeText?: string) {
-  const [day, month, year] = dateText.split(".");
-  return `${year}-${month}-${day}T${timeText ?? "12:00"}:00`;
+function toLocalIso(date: string, time: string) {
+  const [day, month, year] = date.split("/").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  return new Date(Date.UTC(year, month - 1, day, hour - 1, minute)).toISOString();
 }
 
-function parseCalendar(html: string) {
-  const lines = htmlToLines(html);
-  const parsed: { date: string; home: string; away: string; round: string; time?: string }[] = [];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    if (!/^\d{2}\.\d{2}\.\d{4}$/.test(lines[i])) continue;
-
-    const date = lines[i];
-    const window = lines.slice(i + 1, i + 12);
-    const roundIndex = window.findIndex((line) => /^Jornada\s+\d+/i.test(line));
-    if (roundIndex < 2) continue;
-
-    const teamCandidates = window.slice(0, roundIndex).filter((line) => {
-      if (/^(Segunda|Terça|Quarta|Quinta|Sexta|Sábado|Domingo)/i.test(line)) return false;
-      if (/Liga Portugal/i.test(line)) return false;
-      return line.length > 1;
+function parseFixtures(text: string): Fixture[] {
+  const fixturePattern = /(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2})\s+(.+?)\s+-\s+(.+?)\s+(\d+ª Jornada)/g;
+  const fixtures: Fixture[] = [];
+  for (const match of text.matchAll(fixturePattern)) {
+    fixtures.push({
+      date: match[1],
+      time: match[2],
+      home: match[3].trim(),
+      away: match[4].trim(),
+      round: match[5],
     });
-
-    const home = teamCandidates[0];
-    const away = teamCandidates[1];
-    const roundLine = window[roundIndex];
-    if (!home || !away) continue;
-
-    const time = roundLine.match(/·\s*(\d{1,2}:\d{2})/)?.[1];
-    parsed.push({ date, home, away, round: roundLine.split("·")[0].trim(), time });
   }
-
-  return parsed;
+  return fixtures;
 }
 
-export async function fetchScFarenseSchedule(): Promise<LiveSourcePayload> {
+export async function fetchScFarenseFeed(): Promise<FarenseFeed> {
   const response = await fetch(SOURCE_URL, {
-    headers: { "user-agent": "ClubPulse/0.1 (+https://github.com/Albundy73/clubpulse)" },
-    next: { revalidate: 1800 },
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; ClubPulse/0.1; +https://github.com/Albundy73/clubpulse)",
+      Accept: "text/html,application/xhtml+xml",
+      "Accept-Language": "pt-PT,pt;q=0.9,en;q=0.8",
+    },
+    next: { revalidate: 900 },
   });
 
-  if (!response.ok) throw new Error(`SC Farense source returned ${response.status}`);
+  if (!response.ok) {
+    throw new Error(`SC Farense request failed (${response.status})`);
+  }
 
-  const html = await response.text();
-  const fixtures = parseCalendar(html);
-  if (!fixtures.length) throw new Error("SC Farense schedule could not be parsed");
+  const text = htmlToText(await response.text());
+  const fixtures = parseFixtures(text);
 
-  const farenseClub: Club = {
+  if (fixtures.length === 0) {
+    throw new Error("Could not parse SC Farense fixtures");
+  }
+
+  const competition: Competition = {
+    id: "liga-portugal-2-2026-27",
+    sportId: "football",
+    name: "Liga Portugal 2 Meu Super",
+    season: "2026/27",
+    countryId: "pt",
+    source: { provider: PROVIDER, externalId: "liga-portugal-2-2026-27", url: SOURCE_URL },
+  };
+
+  const clubMap = new Map<string, Club>();
+  const teamMap = new Map<string, Team>();
+
+  clubMap.set("farense-football", {
     id: "farense-football",
     name: "SC Farense",
     shortName: "Farense",
     cityId: "faro",
     sportId: "football",
     source: { provider: PROVIDER, externalId: "sc-farense", url: SOURCE_URL },
-  };
-
-  const competition: Competition = {
-    id: "liga-portugal-2-2026-27",
-    sportId: "football",
-    name: "Liga Portugal 2",
-    season: "2026/27",
-    countryId: "pt",
-    source: { provider: PROVIDER, externalId: "liga-portugal-2-2026-27", url: SOURCE_URL },
-  };
-
-  const clubMap = new Map<string, Club>([[farenseClub.id, farenseClub]]);
-  const teamMap = new Map<string, Team>([
-    [
-      "farense-senior",
-      {
-        id: "farense-senior",
-        clubId: farenseClub.id,
-        name: "SC Farense",
-        category: "Senior",
-        source: { provider: PROVIDER, externalId: "sc-farense-senior", url: SOURCE_URL },
-      },
-    ],
-  ]);
+  });
+  teamMap.set("farense-senior", {
+    id: "farense-senior",
+    clubId: "farense-football",
+    name: "SC Farense",
+    category: "Senior",
+    source: { provider: PROVIDER, externalId: "sc-farense-senior", url: SOURCE_URL },
+  });
 
   function ensureTeam(name: string) {
     if (name === "SC Farense") return "farense-senior";
@@ -164,6 +163,7 @@ export async function fetchScFarenseSchedule(): Promise<LiveSourcePayload> {
       id: `live-${slugify(externalId)}`,
       sportId: "football",
       competitionId: competition.id,
+      competition: competition.name,
       homeTeamId,
       awayTeamId,
       date,
