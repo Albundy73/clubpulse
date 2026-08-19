@@ -1,4 +1,4 @@
-import type { City, Club, Country, Match, Sport, Team } from "./types";
+import type { City, Club, Competition, Country, Match, Sport, Team } from "./types";
 
 export const sports: Sport[] = [
   { id: "football", name: "Football", icon: "⚽" },
@@ -22,16 +22,103 @@ export const cities: City[] = [
 ];
 
 export const clubs: Club[] = [
-  { id: "farense-football", name: "SC Farense", shortName: "Farense", cityId: "faro", sportId: "football" },
-  { id: "farense-basketball", name: "SC Farense", shortName: "Farense", cityId: "faro", sportId: "basketball" },
-  { id: "faro-football", name: "Faro FC", shortName: "Faro FC", cityId: "faro", sportId: "football" },
+  {
+    id: "farense-football",
+    name: "SC Farense",
+    shortName: "Farense",
+    cityId: "faro",
+    sportId: "football",
+    source: { provider: "mock-fpf", externalId: "club-farense-football" },
+  },
+  {
+    id: "farense-basketball",
+    name: "SC Farense",
+    shortName: "Farense",
+    cityId: "faro",
+    sportId: "basketball",
+    source: { provider: "mock-fpb", externalId: "club-farense-basketball" },
+  },
+  {
+    id: "faro-football",
+    name: "Faro FC",
+    shortName: "Faro FC",
+    cityId: "faro",
+    sportId: "football",
+    source: { provider: "mock-fpf", externalId: "club-faro-football" },
+  },
+  {
+    id: "porto-basketball",
+    name: "FC Porto",
+    shortName: "Porto",
+    cityId: "porto",
+    sportId: "basketball",
+    source: { provider: "mock-fpb", externalId: "club-porto-basketball" },
+  },
 ];
 
 export const teams: Team[] = [
-  { id: "farense-senior", clubId: "farense-football", name: "SC Farense", category: "Senior" },
-  { id: "farense-u19", clubId: "farense-football", name: "SC Farense U19", category: "U19" },
-  { id: "farense-basket", clubId: "farense-basketball", name: "Farense Basket", category: "Senior" },
-  { id: "faro-fc", clubId: "faro-football", name: "Faro FC", category: "Senior" },
+  {
+    id: "farense-senior",
+    clubId: "farense-football",
+    name: "SC Farense",
+    category: "Senior",
+    source: { provider: "mock-fpf", externalId: "team-farense-senior" },
+  },
+  {
+    id: "farense-u19",
+    clubId: "farense-football",
+    name: "SC Farense U19",
+    category: "U19",
+    source: { provider: "mock-fpf", externalId: "team-farense-u19" },
+  },
+  {
+    id: "farense-basket",
+    clubId: "farense-basketball",
+    name: "Farense Basket",
+    category: "Senior",
+    source: { provider: "mock-fpb", externalId: "team-farense-basket" },
+  },
+  {
+    id: "faro-fc",
+    clubId: "faro-football",
+    name: "Faro FC",
+    category: "Senior",
+    source: { provider: "mock-fpf", externalId: "team-faro-fc" },
+  },
+  {
+    id: "porto-basket",
+    clubId: "porto-basketball",
+    name: "FC Porto Basket",
+    category: "Senior",
+    source: { provider: "mock-fpb", externalId: "team-porto-basket" },
+  },
+];
+
+export const competitions: Competition[] = [
+  {
+    id: "liga-portugal",
+    sportId: "football",
+    name: "Liga Portugal",
+    season: "2026/27",
+    countryId: "pt",
+    source: { provider: "mock-fpf", externalId: "competition-liga-portugal" },
+  },
+  {
+    id: "campeonato-u19",
+    sportId: "football",
+    name: "Campeonato Nacional U19",
+    season: "2026/27",
+    countryId: "pt",
+    source: { provider: "mock-fpf", externalId: "competition-u19" },
+  },
+  {
+    id: "liga-betclic",
+    sportId: "basketball",
+    name: "Liga Betclic",
+    season: "2026/27",
+    countryId: "pt",
+    source: { provider: "mock-fpb", externalId: "competition-liga-betclic" },
+  },
 ];
 
 const dateFromToday = (days: number, hour: number) => {
@@ -45,7 +132,7 @@ export const matches: Match[] = [
   {
     id: "result-1",
     sportId: "football",
-    competition: "Liga Portugal",
+    competitionId: "liga-portugal",
     homeTeamId: "farense-senior",
     awayTeamId: "faro-fc",
     date: dateFromToday(-1, 20),
@@ -53,47 +140,52 @@ export const matches: Match[] = [
     status: "finished",
     homeScore: 2,
     awayScore: 1,
+    source: { provider: "mock-fpf", externalId: "match-result-1" },
   },
   {
     id: "result-2",
     sportId: "basketball",
-    competition: "Liga Betclic",
+    competitionId: "liga-betclic",
     homeTeamId: "farense-basket",
-    awayTeamId: "farense-basket",
+    awayTeamId: "porto-basket",
     date: dateFromToday(-2, 18),
     venue: "Pavilhão Municipal",
     status: "finished",
     homeScore: 78,
     awayScore: 72,
+    source: { provider: "mock-fpb", externalId: "match-result-2" },
   },
   {
     id: "upcoming-1",
     sportId: "football",
-    competition: "Liga Portugal",
+    competitionId: "liga-portugal",
     homeTeamId: "farense-senior",
     awayTeamId: "faro-fc",
     date: dateFromToday(1, 20),
     venue: "Estádio de São Luís",
     status: "scheduled",
+    source: { provider: "mock-fpf", externalId: "match-upcoming-1" },
   },
   {
     id: "upcoming-2",
     sportId: "football",
-    competition: "Campeonato Nacional U19",
+    competitionId: "campeonato-u19",
     homeTeamId: "farense-u19",
     awayTeamId: "faro-fc",
     date: dateFromToday(3, 15),
     venue: "Complexo Desportivo",
     status: "scheduled",
+    source: { provider: "mock-fpf", externalId: "match-upcoming-2" },
   },
   {
     id: "upcoming-3",
     sportId: "basketball",
-    competition: "Liga Betclic",
+    competitionId: "liga-betclic",
     homeTeamId: "farense-basket",
-    awayTeamId: "farense-basket",
+    awayTeamId: "porto-basket",
     date: dateFromToday(5, 18),
     venue: "Pavilhão Municipal",
     status: "scheduled",
+    source: { provider: "mock-fpb", externalId: "match-upcoming-3" },
   },
 ];
