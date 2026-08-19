@@ -1,3 +1,9 @@
+export type EntitySource = {
+  provider: string;
+  externalId: string;
+  url?: string;
+};
+
 export type Sport = {
   id: string;
   name: string;
@@ -22,6 +28,7 @@ export type Club = {
   cityId: string;
   sportId: string;
   shortName?: string;
+  source?: EntitySource;
 };
 
 export type Team = {
@@ -29,19 +36,32 @@ export type Team = {
   clubId: string;
   name: string;
   category: string;
+  source?: EntitySource;
 };
+
+export type Competition = {
+  id: string;
+  sportId: string;
+  name: string;
+  season?: string;
+  countryId?: string;
+  source?: EntitySource;
+};
+
+export type MatchStatus = "scheduled" | "finished" | "postponed" | "cancelled";
 
 export type Match = {
   id: string;
   sportId: string;
-  competition: string;
+  competitionId: string;
   homeTeamId: string;
   awayTeamId: string;
   date: string;
   venue?: string;
-  status: "scheduled" | "finished";
+  status: MatchStatus;
   homeScore?: number;
   awayScore?: number;
+  source: EntitySource;
 };
 
 export type UserPreferences = {
