@@ -52,7 +52,6 @@ function lastSundayOfMonth(year: number, monthIndex: number) {
 }
 
 function portugalUtcOffsetHours(year: number, month: number, day: number) {
-  // Mainland Portugal observes WET (UTC) in winter and WEST (UTC+1) in summer.
   if (month > 3 && month < 10) return 1;
   if (month < 3 || month > 10) return 0;
   if (month === 3) return day >= lastSundayOfMonth(year, 2) ? 1 : 0;
@@ -64,6 +63,23 @@ function parsePortugueseDate(date: string, time: string) {
   const [hour, minute] = time.split(":").map(Number);
   const offset = portugalUtcOffsetHours(year, month, day);
   return new Date(Date.UTC(year, month - 1, day, hour - offset, minute)).toISOString();
+}
+
+function parseScore(text: string, homeAlias: string, awayAlias: string) {
+  const metadataIndex = text.search(/Data:\s*\d{2}-\d{2}-\d{4}/i);
+  const matchHeader = metadataIndex >= 0 ? text.slice(0, metadataIndex) : text.slice(0, 1200);
+
+  const homeIndex = matchHeader.toLowerCase().indexOf(homeAlias.toLowerCase());
+  const awayIndex = matchHeader.toLowerCase().indexOf(awayAlias.toLowerCase());
+  if (homeIndex < 0 || awayIndex < 0) return null;
+
+  const start = Math.min(homeIndex, awayIndex);
+  const end = Math.max(homeIndex, awayIndex) + Math.max(homeAlias.length, awayAlias.length) + 120;
+  const scoreRegion = matchHeader.slice(start, end);
+  const score = scoreRegion.match(/\b(\d{1,2})\s*-\s*(\d{1,2})\b/);
+
+  if (!score) return null;
+  return { homeScore: Number(score[1]), awayScore: Number(score[2]) };
 }
 
 export async function fetchFpfMatch(mapping: FpfMatchMapping): Promise<Match> {
@@ -83,6 +99,11 @@ export async function fetchFpfMatch(mapping: FpfMatchMapping): Promise<Match> {
   }
 
   const text = htmlToText(await response.text());
+
+  if (/Manutenção/i.test(text)) {
+    throw new Error(`FPF is in maintenance mode for match ${mapping.matchId}`);
+  }
+
   const homeAlias = findAlias(text, mapping.homeAliases);
   const awayAlias = findAlias(text, mapping.awayAliases);
 
@@ -90,17 +111,17 @@ export async function fetchFpfMatch(mapping: FpfMatchMapping): Promise<Match> {
     throw new Error(`Could not identify teams in FPF match ${mapping.matchId}`);
   }
 
-  const scorePattern = new RegExp(
-    `${escapeRegExp(homeAlias)}\\s+(\\d+)\\s*-\\s*(\\d+)\\s+${escapeRegExp(awayAlias)}`,
-    "i",
-  );
-  const score = text.match(scorePattern);
+  const score = parseScore(text, homeAlias, awayAlias);
   const metadata = text.match(
     /Data:\s*(\d{2}-\d{2}-\d{4})\s+Hora:\s*(\d{2}:\d{2})\s+Estádio:\s*(.+?)(?=\s+(?:Eventos de jogo|Equipas Iniciais|Treinadores|Equipa de arbitragem|Confrontos Anteriores))/i,
   );
 
-  if (!score || !metadata) {
-    throw new Error(`Could not parse score/date metadata from FPF match ${mapping.matchId}`);
+  if (!score) {
+    throw new Error(`Could not parse score from FPF match ${mapping.matchId}`);
+  }
+
+  if (!metadata) {
+    throw new Error(`Could not parse date/venue metadata from FPF match ${mapping.matchId}`);
   }
 
   return {
@@ -113,8 +134,8 @@ export async function fetchFpfMatch(mapping: FpfMatchMapping): Promise<Match> {
     date: parsePortugueseDate(metadata[1], metadata[2]),
     venue: metadata[3].trim(),
     status: "finished",
-    homeScore: Number(score[1]),
-    awayScore: Number(score[2]),
+    homeScore: score.homeScore,
+    awayScore: score.awayScore,
     source: { provider: "fpf-results", externalId: mapping.matchId, url },
   };
 }
