@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { fetchScFarenseSchedule } from "@/lib/sources/sc-farense";
+import { fetchScFarenseFeed } from "@/lib/sources/sc-farense";
 
 export async function GET() {
   try {
-    const payload = await fetchScFarenseSchedule();
+    const payload = await fetchScFarenseFeed();
     return NextResponse.json(payload, {
       headers: { "Cache-Control": "public, s-maxage=1800, stale-while-revalidate=3600" },
     });
