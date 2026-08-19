@@ -47,6 +47,22 @@ export const clubs: Club[] = [
     source: { provider: "mock-fpf", externalId: "club-faro-football" },
   },
   {
+    id: "sporting-football",
+    name: "Sporting CP",
+    shortName: "Sporting",
+    cityId: "lisbon",
+    sportId: "football",
+    source: { provider: "fpf-results", externalId: "sporting-cp-sad" },
+  },
+  {
+    id: "benfica-football",
+    name: "SL Benfica",
+    shortName: "Benfica",
+    cityId: "lisbon",
+    sportId: "football",
+    source: { provider: "fpf-results", externalId: "sl-benfica-sad" },
+  },
+  {
     id: "porto-basketball",
     name: "FC Porto",
     shortName: "Porto",
@@ -86,6 +102,20 @@ export const teams: Team[] = [
     source: { provider: "mock-fpf", externalId: "team-faro-fc" },
   },
   {
+    id: "sporting-senior",
+    clubId: "sporting-football",
+    name: "Sporting CP",
+    category: "Senior Men",
+    source: { provider: "fpf-results", externalId: "sporting-cp-senior" },
+  },
+  {
+    id: "benfica-senior",
+    clubId: "benfica-football",
+    name: "SL Benfica",
+    category: "Senior Men",
+    source: { provider: "fpf-results", externalId: "sl-benfica-senior" },
+  },
+  {
     id: "porto-basket",
     clubId: "porto-basketball",
     name: "FC Porto Basket",
@@ -102,6 +132,14 @@ export const competitions: Competition[] = [
     season: "2026/27",
     countryId: "pt",
     source: { provider: "mock-fpf", externalId: "competition-liga-portugal" },
+  },
+  {
+    id: "liga-portugal-2025-26",
+    sportId: "football",
+    name: "Liga Portugal Betclic",
+    season: "2025/26",
+    countryId: "pt",
+    source: { provider: "fpf-results", externalId: "liga-portugal-betclic-2025-26" },
   },
   {
     id: "campeonato-u19",
