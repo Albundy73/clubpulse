@@ -54,6 +54,8 @@ export type Match = {
   id: string;
   sportId: string;
   competitionId: string;
+  /** Temporary denormalized label for the current UI. competitionId is canonical. */
+  competition: string;
   homeTeamId: string;
   awayTeamId: string;
   date: string;
