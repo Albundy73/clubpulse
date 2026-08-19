@@ -13,22 +13,55 @@ const defaultPreferences: UserPreferences = {
   sportIds: ["football", "basketball"],
 };
 
-function formatDate(date: string) {
+function formatTime(date: string) {
   return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(date));
 }
 
-function formatDay(date: string) {
+function formatDayHeading(date: string) {
+  const value = new Date(date);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  if (sameDay(value, today)) return "Today";
+  if (sameDay(value, yesterday)) return "Yesterday";
+  if (sameDay(value, tomorrow)) return "Tomorrow";
+
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "long",
     day: "numeric",
     month: "long",
-  }).format(new Date(date));
+  }).format(value);
+}
+
+function dayKey(date: string) {
+  const value = new Date(date);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+function groupMatchesByDay<T extends { date: string }>(items: T[]) {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const key = dayKey(item.date);
+    const current = groups.get(key) ?? [];
+    current.push(item);
+    groups.set(key, current);
+  }
+  return Array.from(groups.entries()).map(([key, groupedMatches]) => ({
+    key,
+    label: formatDayHeading(groupedMatches[0].date),
+    matches: groupedMatches,
+  }));
 }
 
 export default function ClubPulseDashboard() {
@@ -79,6 +112,8 @@ export default function ClubPulseDashboard() {
     })
     .sort((a, b) => +new Date(a.date) - +new Date(b.date));
 
+  const resultGroups = groupMatchesByDay(results);
+  const upcomingGroups = groupMatchesByDay(upcoming);
   const sportMap = useMemo(() => new Map(sports.map((sport) => [sport.id, sport])), []);
   const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), []);
 
@@ -206,41 +241,28 @@ export default function ClubPulseDashboard() {
               </div>
             </section>
 
-            <section>
-              <div className="mb-4 flex items-end justify-between">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-widest text-slate-400">Selected sports</p>
-                  <h2 className="text-2xl font-bold">Latest results</h2>
-                </div>
-                <span className="text-sm text-slate-500">{results.length} matches</span>
-              </div>
+            <MatchSection
+              eyebrow="Selected sports"
+              title="Latest results"
+              count={results.length}
+              groups={resultGroups}
+              sportMap={sportMap}
+              teamMap={teamMap}
+              localTeamIds={selectedTeamIds}
+              result
+              emptyText="No recent results for your selection."
+            />
 
-              <div className="space-y-3">
-                {results.length === 0 ? (
-                  <EmptyState text="No recent results for your selection." />
-                ) : results.map((match) => (
-                  <MatchCard key={match.id} match={match} sport={sportMap.get(match.sportId)} teamMap={teamMap} result />
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <div className="mb-4 flex items-end justify-between">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-widest text-slate-400">Next 7 days</p>
-                  <h2 className="text-2xl font-bold">Upcoming games</h2>
-                </div>
-                <span className="text-sm text-slate-500">{upcoming.length} matches</span>
-              </div>
-
-              <div className="space-y-3">
-                {upcoming.length === 0 ? (
-                  <EmptyState text="No upcoming games in the next 7 days." />
-                ) : upcoming.map((match) => (
-                  <MatchCard key={match.id} match={match} sport={sportMap.get(match.sportId)} teamMap={teamMap} />
-                ))}
-              </div>
-            </section>
+            <MatchSection
+              eyebrow="Next 7 days"
+              title="Upcoming games"
+              count={upcoming.length}
+              groups={upcomingGroups}
+              sportMap={sportMap}
+              teamMap={teamMap}
+              localTeamIds={selectedTeamIds}
+              emptyText="No upcoming games in the next 7 days."
+            />
           </>
         )}
 
@@ -249,6 +271,69 @@ export default function ClubPulseDashboard() {
         </footer>
       </div>
     </main>
+  );
+}
+
+function MatchSection({
+  eyebrow,
+  title,
+  count,
+  groups,
+  sportMap,
+  teamMap,
+  localTeamIds,
+  result = false,
+  emptyText,
+}: {
+  eyebrow: string;
+  title: string;
+  count: number;
+  groups: { key: string; label: string; matches: typeof matches }[];
+  sportMap: Map<string, (typeof sports)[number]>;
+  teamMap: Map<string, (typeof teams)[number]>;
+  localTeamIds: Set<string>;
+  result?: boolean;
+  emptyText: string;
+}) {
+  return (
+    <section>
+      <div className="mb-5 flex items-end justify-between">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-widest text-slate-400">{eyebrow}</p>
+          <h2 className="text-2xl font-bold">{title}</h2>
+        </div>
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-500">
+          {count} {count === 1 ? "match" : "matches"}
+        </span>
+      </div>
+
+      {groups.length === 0 ? (
+        <EmptyState text={emptyText} />
+      ) : (
+        <div className="space-y-7">
+          {groups.map((group) => (
+            <div key={group.key}>
+              <div className="mb-3 flex items-center gap-3">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-600">{group.label}</h3>
+                <div className="h-px flex-1 bg-slate-200" />
+              </div>
+              <div className="space-y-3">
+                {group.matches.map((match) => (
+                  <MatchCard
+                    key={match.id}
+                    match={match}
+                    sport={sportMap.get(match.sportId)}
+                    teamMap={teamMap}
+                    localTeamIds={localTeamIds}
+                    result={result}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -329,43 +414,89 @@ function PreferenceForm({
   );
 }
 
-function MatchCard({ match, sport, teamMap, result = false }: {
+function MatchCard({
+  match,
+  sport,
+  teamMap,
+  localTeamIds,
+  result = false,
+}: {
   match: (typeof matches)[number];
   sport?: (typeof sports)[number];
   teamMap: Map<string, (typeof teams)[number]>;
+  localTeamIds: Set<string>;
   result?: boolean;
 }) {
   const home = teamMap.get(match.homeTeamId);
   const away = teamMap.get(match.awayTeamId);
+  const homeIsLocal = localTeamIds.has(match.homeTeamId);
+  const awayIsLocal = localTeamIds.has(match.awayTeamId);
 
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
-        <span className="font-semibold">{sport?.icon} {sport?.name} · {match.competition}</span>
-        <span>{result ? formatDate(match.date) : formatDay(match.date)}</span>
-      </div>
-      <div className="mt-4 flex items-center justify-between gap-4">
-        <div className="min-w-0 flex-1 text-right">
-          <div className="font-semibold">{home?.name}</div>
-          <div className="text-xs text-slate-400">{home?.category}</div>
+    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-xs sm:px-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700 shadow-sm">
+            {sport?.icon} {sport?.name}
+          </span>
+          <span className="font-medium text-slate-500">{match.competition}</span>
         </div>
-        <div className="min-w-20 text-center">
+        {!result && (
+          <span className="rounded-full bg-slate-900 px-3 py-1 font-bold text-white">{formatTime(match.date)}</span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-5 sm:gap-6 sm:px-5">
+        <TeamDisplay team={home} local={homeIsLocal} align="right" />
+
+        <div className="min-w-20 text-center sm:min-w-24">
           {result ? (
-            <div className="text-xl font-black">{match.homeScore} - {match.awayScore}</div>
+            <div className="rounded-xl bg-slate-900 px-3 py-2 text-xl font-black tracking-tight text-white sm:text-2xl">
+              {match.homeScore} - {match.awayScore}
+            </div>
           ) : (
-            <>
-              <div className="text-sm font-bold">{formatDate(match.date).split(", ").pop()}</div>
-              <div className="text-xs text-slate-400">vs</div>
-            </>
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Kick-off</div>
+              <div className="mt-1 text-lg font-black text-slate-900">{formatTime(match.date)}</div>
+            </div>
           )}
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="font-semibold">{away?.name}</div>
-          <div className="text-xs text-slate-400">{away?.category}</div>
-        </div>
+
+        <TeamDisplay team={away} local={awayIsLocal} align="left" />
       </div>
-      {match.venue && <div className="mt-4 text-xs text-slate-400">📍 {match.venue}</div>}
+
+      {match.venue && (
+        <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:px-5">
+          📍 {match.venue}
+        </div>
+      )}
     </article>
+  );
+}
+
+function TeamDisplay({
+  team,
+  local,
+  align,
+}: {
+  team?: (typeof teams)[number];
+  local: boolean;
+  align: "left" | "right";
+}) {
+  return (
+    <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}>
+      <div className={`font-semibold sm:text-lg ${local ? "text-slate-950" : "text-slate-600"}`}>
+        {team?.name}
+      </div>
+      <div className={`mt-1 flex flex-wrap items-center gap-1.5 ${align === "right" ? "justify-end" : "justify-start"}`}>
+        <span className="text-xs text-slate-400">{team?.category}</span>
+        {local && (
+          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">
+            Local club
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
