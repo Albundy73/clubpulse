@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
 
   if (!cityId || !sportId) {
     return NextResponse.json(
-      { matches: [], error: "cityId and sportId are required" },
+      { matches: [], teams: [], error: "cityId and sportId are required" },
       { status: 400 },
     );
   }
@@ -26,9 +26,38 @@ export async function GET(request: NextRequest) {
       },
       include: {
         competition: true,
+        homeTeam: true,
+        awayTeam: true,
       },
       orderBy: { scheduledAt: "asc" },
     });
+
+    const teamById = new Map<
+      string,
+      {
+        id: string;
+        clubId: string;
+        name: string;
+        category: string;
+        source: { provider: string; externalId: string; url?: string };
+      }
+    >();
+
+    for (const row of rows) {
+      for (const team of [row.homeTeam, row.awayTeam]) {
+        teamById.set(team.id, {
+          id: team.id,
+          clubId: team.clubId,
+          name: team.name,
+          category: team.category,
+          source: {
+            provider: team.sourceProvider ?? "clubpulse-db",
+            externalId: team.sourceExternalId ?? team.id,
+            url: team.sourceUrl ?? undefined,
+          },
+        });
+      }
+    }
 
     const matches = rows.map((row) => ({
       id: row.id,
@@ -51,12 +80,14 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       source: "ClubPulse PostgreSQL",
+      teams: Array.from(teamById.values()),
       matches,
     });
   } catch (error) {
     return NextResponse.json(
       {
         source: "ClubPulse PostgreSQL",
+        teams: [],
         matches: [],
         error: error instanceof Error ? error.message : "Database unavailable",
       },
