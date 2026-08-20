@@ -1,18 +1,24 @@
 import { NextResponse } from "next/server";
-import { fetchTheSportsDbDiagnostic } from "@/lib/sources/thesportsdb-football";
-
-export const dynamic = "force-dynamic";
+import { fetchTheSportsDbFootballFeed } from "@/lib/sources/thesportsdb-football";
 
 export async function GET() {
   try {
-    const payload = await fetchTheSportsDbDiagnostic();
-    return NextResponse.json(payload);
+    const feed = await fetchTheSportsDbFootballFeed();
+
+    return NextResponse.json(feed, {
+      headers: {
+        "Cache-Control":
+          "public, s-maxage=900, stale-while-revalidate=1800",
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       {
-        provider: "TheSportsDB V1 Free",
-        fetchedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : "Unknown TheSportsDB error",
+        provider: "TheSportsDB",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to load TheSportsDB football feed",
       },
       { status: 502 },
     );
