@@ -120,6 +120,10 @@ export default function ClubPulseDashboard() {
     return Array.from(byId.values());
   }, [liveTeams]);
 
+  const relevantLiveMatchCount = liveMatches.filter(
+    (match) => selectedTeamIds.has(match.homeTeamId) || selectedTeamIds.has(match.awayTeamId),
+  ).length;
+
   const relevantMatches = allMatches.filter((match) =>
     preferences.sportIds.includes(match.sportId) &&
     (activeSportId === "all" || match.sportId === activeSportId) &&
@@ -187,7 +191,7 @@ export default function ClubPulseDashboard() {
               <div className="flex flex-wrap gap-2">{selectedSports.map((sport) => <span key={sport.id} className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200">{sport.icon} {sport.name}</span>)}</div>
             </section>
 
-            {shouldLoadTheSportsDb && <LiveSourceStatus status={liveStatus} count={liveMatches.length} provider="TheSportsDB" />}
+            {shouldLoadTheSportsDb && <LiveSourceStatus status={liveStatus} count={relevantLiveMatchCount} provider="TheSportsDB" />}
 
             <SportFilter selectedSports={selectedSports} activeSportId={activeSportId} onChange={setActiveSportId} />
             <MatchSection eyebrow={activeSportId === "all" ? "Selected sports" : sportMap.get(activeSportId)?.name ?? "Selected sport"} title="Latest results" count={results.length} groups={groupMatchesByDay(results)} sportMap={sportMap} teamMap={teamMap} localTeamIds={selectedTeamIds} result emptyText="No recent results for this sport." />
