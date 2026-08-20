@@ -2,6 +2,7 @@ import type { Match, MatchStatus, Team } from "@/lib/types";
 
 const API_BASE_URL = "https://www.thesportsdb.com/api/v1/json/123";
 const PROVIDER = "thesportsdb";
+const PRIMEIRA_LIGA_ID = "4344";
 
 type SportsDbTeam = {
   idTeam: string;
@@ -113,6 +114,10 @@ function eventDate(event: SportsDbEvent) {
     : `${event.strTimestamp}Z`;
 }
 
+function dateOnly(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
 export async function fetchTheSportsDbFootballFeed() {
   const resolvedTeams = await Promise.all(trackedTeams.map(resolveTrackedTeam));
 
@@ -139,9 +144,8 @@ export async function fetchTheSportsDbFootballFeed() {
     }
   }
 
-  // The free team previous/next endpoints only return one HOME event.
-  // Discover the active league/season pairs from those responses and augment
-  // the feed with the free season endpoint (up to 15 events per league).
+  // Free team previous/next endpoints only return one HOME event. Discover
+  // active league/season pairs and augment with the free season endpoint.
   const leagueSeasons = new Map<string, { leagueId: string; season: string; leagueName?: string | null }>();
   for (const event of eventsById.values()) {
     if (!event.idLeague || !event.strSeason) continue;
@@ -161,6 +165,37 @@ export async function fetchTheSportsDbFootballFeed() {
   );
 
   for (const response of seasonResponses) {
+    for (const event of eventList(response.payload)) {
+      if (
+        (event.idHomeTeam && trackedProviderTeamIds.has(event.idHomeTeam)) ||
+        (event.idAwayTeam && trackedProviderTeamIds.has(event.idAwayTeam))
+      ) {
+        eventsById.set(event.idEvent, event);
+      }
+    }
+  }
+
+  // The free season endpoint is capped and can omit later matches from its
+  // response. Sweep the Primeira Liga day-by-day over ClubPulse's immediate
+  // window (last 7 days through next 7 days) to recover away fixtures while
+  // keeping this request under the free 30-requests/minute allowance.
+  const today = new Date();
+  const dayRequests = Array.from({ length: 15 }, (_, index) => {
+    const date = new Date(today);
+    date.setUTCDate(today.getUTCDate() + index - 7);
+    const day = dateOnly(date);
+    const path = `/eventsday.php?d=${day}&l=${PRIMEIRA_LIGA_ID}`;
+    return { day, path };
+  });
+
+  const dayResponses = await Promise.all(
+    dayRequests.map(async ({ day, path }) => {
+      const payload = await sportsDbFetch<EventsResponse>(path);
+      return { day, path, payload };
+    }),
+  );
+
+  for (const response of dayResponses) {
     for (const event of eventList(response.payload)) {
       if (
         (event.idHomeTeam && trackedProviderTeamIds.has(event.idHomeTeam)) ||
@@ -228,7 +263,7 @@ export async function fetchTheSportsDbFootballFeed() {
     provider: "TheSportsDB V1 Free",
     fetchedAt: new Date().toISOString(),
     note:
-      "Free V1 team previous/next endpoints are home-only. ClubPulse augments them with free league-season schedules where available.",
+      "ClubPulse combines free team, season, and a 15-day Primeira Liga daily sweep to improve current fixture coverage.",
     trackedTeams: resolvedTeams.map((team) => ({
       query: team.query,
       providerTeamId: team.sportsDbTeam.idTeam,
@@ -247,6 +282,16 @@ export async function fetchTheSportsDbFootballFeed() {
         leagueId: response.leagueId,
         leagueName: response.leagueName,
         season: response.season,
+        path: response.path,
+        returnedCount: eventList(response.payload).length,
+        trackedCount: eventList(response.payload).filter(
+          (event) =>
+            (event.idHomeTeam && trackedProviderTeamIds.has(event.idHomeTeam)) ||
+            (event.idAwayTeam && trackedProviderTeamIds.has(event.idAwayTeam)),
+        ).length,
+      })),
+      daySchedules: dayResponses.map((response) => ({
+        day: response.day,
         path: response.path,
         returnedCount: eventList(response.payload).length,
         trackedCount: eventList(response.payload).filter(
