@@ -10,6 +10,12 @@ const defaultPreferences: UserPreferences = { countryId: "pt", cityId: "faro", s
 
 type LiveStatus = "idle" | "loading" | "loaded" | "error";
 
+type MatchesPayload = {
+  matches?: Match[];
+  teams?: Team[];
+  error?: string;
+};
+
 function formatTime(date: string) {
   return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date(date));
 }
@@ -63,13 +69,8 @@ export default function ClubPulseDashboard() {
     if (activeSportId !== "all" && !preferences.sportIds.includes(activeSportId)) setActiveSportId("all");
   }, [preferences.sportIds, activeSportId]);
 
-  const shouldLoadTheSportsDb =
-    preferences.countryId === "pt" &&
-    ["lisbon", "faro"].includes(preferences.cityId) &&
-    preferences.sportIds.includes("football");
-
   useEffect(() => {
-    if (!shouldLoadTheSportsDb) {
+    if (!hydrated || !preferences.cityId || preferences.sportIds.length === 0) {
       setLiveMatches([]);
       setLiveTeams([]);
       setLiveStatus("idle");
@@ -79,14 +80,29 @@ export default function ClubPulseDashboard() {
     const controller = new AbortController();
     setLiveStatus("loading");
 
-    fetch("/api/sources/thesportsdb/football", { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error(`TheSportsDB feed returned ${response.status}`);
-        return response.json() as Promise<{ matches?: Match[]; teams?: Team[] }>;
-      })
-      .then((payload) => {
-        setLiveMatches(payload.matches ?? []);
-        setLiveTeams(payload.teams ?? []);
+    Promise.all(
+      preferences.sportIds.map(async (sportId) => {
+        const params = new URLSearchParams({ cityId: preferences.cityId, sportId });
+        const response = await fetch(`/api/matches?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const payload = await response.json() as MatchesPayload;
+        if (!response.ok) {
+          throw new Error(payload.error ?? `ClubPulse match API returned ${response.status}`);
+        }
+        return payload;
+      }),
+    )
+      .then((payloads) => {
+        const matchById = new Map<string, Match>();
+        const teamById = new Map<string, Team>();
+        for (const payload of payloads) {
+          for (const match of payload.matches ?? []) matchById.set(match.id, match);
+          for (const team of payload.teams ?? []) teamById.set(team.id, team);
+        }
+        setLiveMatches(Array.from(matchById.values()));
+        setLiveTeams(Array.from(teamById.values()));
         setLiveStatus("loaded");
       })
       .catch((error) => {
@@ -97,7 +113,7 @@ export default function ClubPulseDashboard() {
       });
 
     return () => controller.abort();
-  }, [shouldLoadTheSportsDb]);
+  }, [hydrated, preferences.cityId, preferences.sportIds]);
 
   const availableCities = cities.filter((city) => city.countryId === preferences.countryId);
   const selectedCity = cities.find((city) => city.id === preferences.cityId);
@@ -106,12 +122,10 @@ export default function ClubPulseDashboard() {
   const selectedClubIds = new Set(selectedClubs.map((club) => club.id));
   const selectedTeamIds = new Set(teams.filter((team) => selectedClubIds.has(team.clubId)).map((team) => team.id));
 
-  const allMatches = useMemo(() => {
-    const byId = new Map<string, Match>();
-    for (const match of matches) byId.set(match.id, match);
-    for (const match of liveMatches) byId.set(match.id, match);
-    return Array.from(byId.values());
-  }, [liveMatches]);
+  const allMatches = useMemo(
+    () => liveStatus === "loaded" ? liveMatches : matches,
+    [liveMatches, liveStatus],
+  );
 
   const allTeams = useMemo(() => {
     const byId = new Map<string, Team>();
@@ -120,14 +134,10 @@ export default function ClubPulseDashboard() {
     return Array.from(byId.values());
   }, [liveTeams]);
 
-  const relevantLiveMatchCount = liveMatches.filter(
-    (match) => selectedTeamIds.has(match.homeTeamId) || selectedTeamIds.has(match.awayTeamId),
-  ).length;
-
   const relevantMatches = allMatches.filter((match) =>
     preferences.sportIds.includes(match.sportId) &&
     (activeSportId === "all" || match.sportId === activeSportId) &&
-    (selectedTeamIds.has(match.homeTeamId) || selectedTeamIds.has(match.awayTeamId)),
+    (liveStatus === "loaded" || selectedTeamIds.has(match.homeTeamId) || selectedTeamIds.has(match.awayTeamId)),
   );
 
   const results = relevantMatches.filter((match) => match.status === "finished").sort((a, b) => +new Date(b.date) - +new Date(a.date));
@@ -191,22 +201,22 @@ export default function ClubPulseDashboard() {
               <div className="flex flex-wrap gap-2">{selectedSports.map((sport) => <span key={sport.id} className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200">{sport.icon} {sport.name}</span>)}</div>
             </section>
 
-            {shouldLoadTheSportsDb && <LiveSourceStatus status={liveStatus} count={relevantLiveMatchCount} provider="TheSportsDB" />}
+            <LiveSourceStatus status={liveStatus} count={liveMatches.length} provider="ClubPulse PostgreSQL" />
 
             <SportFilter selectedSports={selectedSports} activeSportId={activeSportId} onChange={setActiveSportId} />
             <MatchSection eyebrow={activeSportId === "all" ? "Selected sports" : sportMap.get(activeSportId)?.name ?? "Selected sport"} title="Latest results" count={results.length} groups={groupMatchesByDay(results)} sportMap={sportMap} teamMap={teamMap} localTeamIds={selectedTeamIds} result emptyText="No recent results for this sport." />
             <MatchSection eyebrow="Next 7 days" title="Upcoming games" count={upcoming.length} groups={groupMatchesByDay(upcoming)} sportMap={sportMap} teamMap={teamMap} localTeamIds={selectedTeamIds} emptyText="No upcoming games in the next 7 days for this sport." />
           </>
         )}
-        <footer className="border-t py-6 text-center text-xs text-slate-400">ClubPulse prototype · TheSportsDB active · API-SPORTS connector retained for future use</footer>
+        <footer className="border-t py-6 text-center text-xs text-slate-400">ClubPulse prototype · PostgreSQL dashboard · TheSportsDB ingestion active</footer>
       </div>
     </main>
   );
 }
 
 function LiveSourceStatus({ status, count, provider }: { status: LiveStatus; count: number; provider: string }) {
-  const text = status === "loading" ? `Loading ${provider} results…` : status === "loaded" ? `${provider} · ${count} match${count === 1 ? "" : "es"} loaded` : `${provider} unavailable — showing available ClubPulse data`;
-  return <div className={`rounded-xl border px-4 py-3 text-sm font-medium ${status === "error" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{status === "loading" ? "↻" : status === "loaded" ? "✓" : "!"} {text}</div>;
+  const text = status === "idle" ? `Waiting to load ${provider}` : status === "loading" ? `Loading ${provider} results…` : status === "loaded" ? `${provider} · ${count} match${count === 1 ? "" : "es"} loaded` : `${provider} unavailable — showing prototype data`;
+  return <div className={`rounded-xl border px-4 py-3 text-sm font-medium ${status === "error" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{status === "loading" ? "↻" : status === "loaded" ? "✓" : status === "error" ? "!" : "·"} {text}</div>;
 }
 
 function Onboarding({ preferences, availableCities, selectedCity, selectedSports, onCountryChange, onCityChange, onToggleSport, onComplete }: { preferences: UserPreferences; availableCities: typeof cities; selectedCity?: (typeof cities)[number]; selectedSports: typeof sports; onCountryChange: (id: string) => void; onCityChange: (id: string) => void; onToggleSport: (id: string) => void; onComplete: () => void }) {
