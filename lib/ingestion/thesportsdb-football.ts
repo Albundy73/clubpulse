@@ -114,7 +114,12 @@ export async function ingestTheSportsDbFootball() {
   }
 
   for (const team of feed.teams) {
-    const externalClubId = `thesportsdb-club-${team.source.externalId}`;
+    const source = team.source;
+    if (!source?.externalId) {
+      throw new Error(`TheSportsDB team ${team.id} is missing source metadata`);
+    }
+
+    const externalClubId = `thesportsdb-club-${source.externalId}`;
 
     await prisma.club.upsert({
       where: { id: externalClubId },
@@ -124,14 +129,14 @@ export async function ingestTheSportsDbFootball() {
         shortName: team.name,
         cityId: EXTERNAL_CITY_ID,
         sportId: "football",
-        ...sourceFields(team.source),
+        ...sourceFields(source),
       },
       update: {
         name: team.name,
         shortName: team.name,
         cityId: EXTERNAL_CITY_ID,
         sportId: "football",
-        ...sourceFields(team.source),
+        ...sourceFields(source),
       },
     });
 
@@ -142,13 +147,13 @@ export async function ingestTheSportsDbFootball() {
         clubId: externalClubId,
         name: team.name,
         category: team.category,
-        ...sourceFields(team.source),
+        ...sourceFields(source),
       },
       update: {
         clubId: externalClubId,
         name: team.name,
         category: team.category,
-        ...sourceFields(team.source),
+        ...sourceFields(source),
       },
     });
   }
