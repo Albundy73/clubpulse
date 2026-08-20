@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { cities, clubs, countries, matches, sports, teams } from "@/lib/mock-data";
-import type { Match, UserPreferences } from "@/lib/types";
+import type { Match, Team, UserPreferences } from "@/lib/types";
 
 const STORAGE_KEY = "clubpulse-preferences";
 const ONBOARDING_KEY = "clubpulse-onboarding-complete";
@@ -44,6 +44,7 @@ export default function ClubPulseDashboard() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeSportId, setActiveSportId] = useState("all");
   const [liveMatches, setLiveMatches] = useState<Match[]>([]);
+  const [liveTeams, setLiveTeams] = useState<Team[]>([]);
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("idle");
 
   useEffect(() => {
@@ -62,11 +63,15 @@ export default function ClubPulseDashboard() {
     if (activeSportId !== "all" && !preferences.sportIds.includes(activeSportId)) setActiveSportId("all");
   }, [preferences.sportIds, activeSportId]);
 
-  const shouldLoadFpf = preferences.countryId === "pt" && preferences.cityId === "lisbon" && preferences.sportIds.includes("football");
+  const shouldLoadTheSportsDb =
+    preferences.countryId === "pt" &&
+    ["lisbon", "faro"].includes(preferences.cityId) &&
+    preferences.sportIds.includes("football");
 
   useEffect(() => {
-    if (!shouldLoadFpf) {
+    if (!shouldLoadTheSportsDb) {
       setLiveMatches([]);
+      setLiveTeams([]);
       setLiveStatus("idle");
       return;
     }
@@ -74,23 +79,25 @@ export default function ClubPulseDashboard() {
     const controller = new AbortController();
     setLiveStatus("loading");
 
-    fetch("/api/fpf/sporting-benfica", { signal: controller.signal })
+    fetch("/api/sources/thesportsdb/football", { signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error(`FPF feed returned ${response.status}`);
-        return response.json() as Promise<{ matches?: Match[] }>;
+        if (!response.ok) throw new Error(`TheSportsDB feed returned ${response.status}`);
+        return response.json() as Promise<{ matches?: Match[]; teams?: Team[] }>;
       })
       .then((payload) => {
         setLiveMatches(payload.matches ?? []);
+        setLiveTeams(payload.teams ?? []);
         setLiveStatus("loaded");
       })
       .catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setLiveMatches([]);
+        setLiveTeams([]);
         setLiveStatus("error");
       });
 
     return () => controller.abort();
-  }, [shouldLoadFpf]);
+  }, [shouldLoadTheSportsDb]);
 
   const availableCities = cities.filter((city) => city.countryId === preferences.countryId);
   const selectedCity = cities.find((city) => city.id === preferences.cityId);
@@ -106,6 +113,13 @@ export default function ClubPulseDashboard() {
     return Array.from(byId.values());
   }, [liveMatches]);
 
+  const allTeams = useMemo(() => {
+    const byId = new Map<string, Team>();
+    for (const team of teams) byId.set(team.id, team);
+    for (const team of liveTeams) byId.set(team.id, team);
+    return Array.from(byId.values());
+  }, [liveTeams]);
+
   const relevantMatches = allMatches.filter((match) =>
     preferences.sportIds.includes(match.sportId) &&
     (activeSportId === "all" || match.sportId === activeSportId) &&
@@ -119,7 +133,7 @@ export default function ClubPulseDashboard() {
   }).sort((a, b) => +new Date(a.date) - +new Date(b.date));
 
   const sportMap = useMemo(() => new Map(sports.map((sport) => [sport.id, sport])), []);
-  const teamMap = useMemo(() => new Map(teams.map((team) => [team.id, team])), []);
+  const teamMap = useMemo(() => new Map(allTeams.map((team) => [team.id, team])), [allTeams]);
 
   function updatePreference<K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) {
     setPreferences((current) => ({ ...current, [key]: value }));
@@ -173,21 +187,21 @@ export default function ClubPulseDashboard() {
               <div className="flex flex-wrap gap-2">{selectedSports.map((sport) => <span key={sport.id} className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200">{sport.icon} {sport.name}</span>)}</div>
             </section>
 
-            {shouldLoadFpf && <LiveSourceStatus status={liveStatus} count={liveMatches.length} />}
+            {shouldLoadTheSportsDb && <LiveSourceStatus status={liveStatus} count={liveMatches.length} provider="TheSportsDB" />}
 
             <SportFilter selectedSports={selectedSports} activeSportId={activeSportId} onChange={setActiveSportId} />
             <MatchSection eyebrow={activeSportId === "all" ? "Selected sports" : sportMap.get(activeSportId)?.name ?? "Selected sport"} title="Latest results" count={results.length} groups={groupMatchesByDay(results)} sportMap={sportMap} teamMap={teamMap} localTeamIds={selectedTeamIds} result emptyText="No recent results for this sport." />
             <MatchSection eyebrow="Next 7 days" title="Upcoming games" count={upcoming.length} groups={groupMatchesByDay(upcoming)} sportMap={sportMap} teamMap={teamMap} localTeamIds={selectedTeamIds} emptyText="No upcoming games in the next 7 days for this sport." />
           </>
         )}
-        <footer className="border-t py-6 text-center text-xs text-slate-400">ClubPulse prototype · Live FPF integration enabled for Lisbon football</footer>
+        <footer className="border-t py-6 text-center text-xs text-slate-400">ClubPulse prototype · TheSportsDB active · API-SPORTS connector retained for future use</footer>
       </div>
     </main>
   );
 }
 
-function LiveSourceStatus({ status, count }: { status: LiveStatus; count: number }) {
-  const text = status === "loading" ? "Loading official FPF results…" : status === "loaded" ? `Official FPF source · ${count} match${count === 1 ? "" : "es"} loaded` : "Official FPF source unavailable — showing available ClubPulse data";
+function LiveSourceStatus({ status, count, provider }: { status: LiveStatus; count: number; provider: string }) {
+  const text = status === "loading" ? `Loading ${provider} results…` : status === "loaded" ? `${provider} · ${count} match${count === 1 ? "" : "es"} loaded` : `${provider} unavailable — showing available ClubPulse data`;
   return <div className={`rounded-xl border px-4 py-3 text-sm font-medium ${status === "error" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{status === "loading" ? "↻" : status === "loaded" ? "✓" : "!"} {text}</div>;
 }
 
@@ -205,7 +219,7 @@ function SportFilter({ selectedSports, activeSportId, onChange }: { selectedSpor
   return <section aria-label="Filter dashboard by sport"><div className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Filter dashboard</div><div className="flex gap-2 overflow-x-auto pb-1">{options.map((sport) => { const active = activeSportId === sport.id; return <button key={sport.id} onClick={() => onChange(sport.id)} aria-pressed={active} className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? "border-slate-900 bg-slate-900 text-white shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"}`}>{sport.icon} {sport.name}</button>; })}</div></section>;
 }
 
-function MatchSection({ eyebrow, title, count, groups, sportMap, teamMap, localTeamIds, result = false, emptyText }: { eyebrow: string; title: string; count: number; groups: { key: string; label: string; matches: Match[] }[]; sportMap: Map<string, (typeof sports)[number]>; teamMap: Map<string, (typeof teams)[number]>; localTeamIds: Set<string>; result?: boolean; emptyText: string }) {
+function MatchSection({ eyebrow, title, count, groups, sportMap, teamMap, localTeamIds, result = false, emptyText }: { eyebrow: string; title: string; count: number; groups: { key: string; label: string; matches: Match[] }[]; sportMap: Map<string, (typeof sports)[number]>; teamMap: Map<string, Team>; localTeamIds: Set<string>; result?: boolean; emptyText: string }) {
   return <section><div className="mb-5 flex items-end justify-between"><div><p className="text-sm font-semibold uppercase tracking-widest text-slate-400">{eyebrow}</p><h2 className="text-2xl font-bold">{title}</h2></div><span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-500">{count} {count === 1 ? "match" : "matches"}</span></div>{groups.length === 0 ? <EmptyState text={emptyText} /> : <div className="space-y-7">{groups.map((group) => <div key={group.key}><div className="mb-3 flex items-center gap-3"><h3 className="text-sm font-black uppercase tracking-wider text-slate-600">{group.label}</h3><div className="h-px flex-1 bg-slate-200" /></div><div className="space-y-3">{group.matches.map((match) => <MatchCard key={match.id} match={match} sport={sportMap.get(match.sportId)} teamMap={teamMap} localTeamIds={localTeamIds} result={result} />)}</div></div>)}</div>}</section>;
 }
 
@@ -215,13 +229,13 @@ function PreferenceForm({ preferences, availableCities, onCountryChange, onCityC
   return <><div className="grid gap-4 md:grid-cols-2"><label className="space-y-2"><span className={`text-sm font-semibold ${labelClass}`}>{onboarding && <span className="mr-2 text-slate-500">01</span>}Country</span><select value={preferences.countryId} onChange={(e) => onCountryChange(e.target.value)} className={`w-full rounded-xl border px-4 py-3 outline-none ${selectClass}`}>{countries.map((country) => <option key={country.id} value={country.id}>{country.flag} {country.name}</option>)}</select></label><label className="space-y-2"><span className={`text-sm font-semibold ${labelClass}`}>{onboarding && <span className="mr-2 text-slate-500">02</span>}City</span><select value={preferences.cityId} onChange={(e) => onCityChange(e.target.value)} className={`w-full rounded-xl border px-4 py-3 outline-none ${selectClass}`}>{availableCities.map((city) => <option key={city.id} value={city.id}>{city.name}</option>)}</select></label></div><div className="mt-6"><span className={`text-sm font-semibold ${labelClass}`}>{onboarding && <span className="mr-2 text-slate-500">03</span>}Sports {onboarding && <span className="ml-2 text-xs font-normal text-slate-500">Choose one or more</span>}</span><div className="mt-3 flex flex-wrap gap-2">{sports.map((sport) => { const selected = preferences.sportIds.includes(sport.id); return <button key={sport.id} type="button" onClick={() => onToggleSport(sport.id)} aria-pressed={selected} className={`rounded-full px-4 py-2 text-sm font-semibold transition ${selected ? dark ? "bg-white text-slate-950" : "bg-slate-900 text-white" : dark ? "bg-slate-800 text-slate-300 hover:bg-slate-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{selected && onboarding ? "✓ " : ""}{sport.icon} {sport.name}</button>; })}</div></div></>;
 }
 
-function MatchCard({ match, sport, teamMap, localTeamIds, result = false }: { match: Match; sport?: (typeof sports)[number]; teamMap: Map<string, (typeof teams)[number]>; localTeamIds: Set<string>; result?: boolean }) {
+function MatchCard({ match, sport, teamMap, localTeamIds, result = false }: { match: Match; sport?: (typeof sports)[number]; teamMap: Map<string, Team>; localTeamIds: Set<string>; result?: boolean }) {
   const home = teamMap.get(match.homeTeamId);
   const away = teamMap.get(match.awayTeamId);
-  return <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-xs sm:px-5"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700 shadow-sm">{sport?.icon} {sport?.name}</span><span className="font-medium text-slate-500">{match.competition}</span>{match.source.provider === "fpf-results" && <span className="rounded-full bg-emerald-100 px-2 py-1 font-bold text-emerald-700">FPF</span>}</div>{!result && <span className="rounded-full bg-slate-900 px-3 py-1 font-bold text-white">{formatTime(match.date)}</span>}</div><div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-5 sm:gap-6 sm:px-5"><TeamDisplay team={home} local={localTeamIds.has(match.homeTeamId)} align="right" /><div className="min-w-20 text-center sm:min-w-24">{result ? <div className="rounded-xl bg-slate-900 px-3 py-2 text-xl font-black tracking-tight text-white sm:text-2xl">{match.homeScore} - {match.awayScore}</div> : <div><div className="text-xs font-bold uppercase tracking-wider text-slate-400">Kick-off</div><div className="mt-1 text-lg font-black text-slate-900">{formatTime(match.date)}</div></div>}</div><TeamDisplay team={away} local={localTeamIds.has(match.awayTeamId)} align="left" /></div>{match.venue && <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:px-5">📍 {match.venue}</div>}</article>;
+  return <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-xs sm:px-5"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700 shadow-sm">{sport?.icon} {sport?.name}</span><span className="font-medium text-slate-500">{match.competition}</span>{match.source.provider === "fpf-results" && <span className="rounded-full bg-emerald-100 px-2 py-1 font-bold text-emerald-700">FPF</span>}{match.source.provider === "thesportsdb" && <span className="rounded-full bg-blue-100 px-2 py-1 font-bold text-blue-700">TheSportsDB</span>}{match.source.provider === "api-sports-football" && <span className="rounded-full bg-violet-100 px-2 py-1 font-bold text-violet-700">API-SPORTS</span>}</div>{!result && <span className="rounded-full bg-slate-900 px-3 py-1 font-bold text-white">{formatTime(match.date)}</span>}</div><div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-5 sm:gap-6 sm:px-5"><TeamDisplay team={home} local={localTeamIds.has(match.homeTeamId)} align="right" /><div className="min-w-20 text-center sm:min-w-24">{result ? <div className="rounded-xl bg-slate-900 px-3 py-2 text-xl font-black tracking-tight text-white sm:text-2xl">{match.homeScore} - {match.awayScore}</div> : <div><div className="text-xs font-bold uppercase tracking-wider text-slate-400">Kick-off</div><div className="mt-1 text-lg font-black text-slate-900">{formatTime(match.date)}</div></div>}</div><TeamDisplay team={away} local={localTeamIds.has(match.awayTeamId)} align="left" /></div>{match.venue && <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:px-5">📍 {match.venue}</div>}</article>;
 }
 
-function TeamDisplay({ team, local, align }: { team?: (typeof teams)[number]; local: boolean; align: "left" | "right" }) {
+function TeamDisplay({ team, local, align }: { team?: Team; local: boolean; align: "left" | "right" }) {
   return <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}><div className={`font-semibold sm:text-lg ${local ? "text-slate-950" : "text-slate-600"}`}>{team?.name}</div><div className={`mt-1 flex flex-wrap items-center gap-1.5 ${align === "right" ? "justify-end" : "justify-start"}`}><span className="text-xs text-slate-400">{team?.category}</span>{local && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Local club</span>}</div></div>;
 }
 
