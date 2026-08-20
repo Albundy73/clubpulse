@@ -12,6 +12,7 @@ type ApiTeam = {
 type TeamSearchResponse = {
   response?: Array<{ team: ApiTeam }>;
   errors?: unknown;
+  results?: number;
 };
 
 type FixtureResponseItem = {
@@ -38,11 +39,25 @@ type FixtureResponseItem = {
 type FixturesResponse = {
   response?: FixtureResponseItem[];
   errors?: unknown;
+  results?: number;
 };
 
 type TrackedTeam = {
   query: string;
   localTeamId: string;
+};
+
+type ApiDiagnostics = {
+  path: string;
+  status: number;
+  results?: number;
+  errors?: unknown;
+  quota?: {
+    dailyRemaining?: string | null;
+    dailyLimit?: string | null;
+    minuteRemaining?: string | null;
+    minuteLimit?: string | null;
+  };
 };
 
 const trackedTeams: TrackedTeam[] = [
@@ -57,24 +72,39 @@ function apiKey() {
   return key;
 }
 
-async function apiFetch<T>(path: string): Promise<T> {
+async function apiFetch<T extends { results?: number; errors?: unknown }>(path: string) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       "x-apisports-key": apiKey(),
       Accept: "application/json",
     },
-    next: { revalidate: 900 },
+    cache: "no-store",
   });
+
+  const payload = (await response.json()) as T;
+
+  const diagnostics: ApiDiagnostics = {
+    path,
+    status: response.status,
+    results: payload.results,
+    errors: payload.errors,
+    quota: {
+      dailyRemaining: response.headers.get("x-ratelimit-requests-remaining"),
+      dailyLimit: response.headers.get("x-ratelimit-requests-limit"),
+      minuteRemaining: response.headers.get("X-RateLimit-Remaining"),
+      minuteLimit: response.headers.get("X-RateLimit-Limit"),
+    },
+  };
 
   if (!response.ok) {
     throw new Error(`API-SPORTS request failed (${response.status}) for ${path}`);
   }
 
-  return response.json() as Promise<T>;
+  return { payload, diagnostics };
 }
 
 async function resolveTrackedTeam(tracked: TrackedTeam) {
-  const payload = await apiFetch<TeamSearchResponse>(`/teams?search=${encodeURIComponent(tracked.query)}`);
+  const { payload, diagnostics } = await apiFetch<TeamSearchResponse>(`/teams?search=${encodeURIComponent(tracked.query)}`);
   const candidates = payload.response ?? [];
   const portugal = candidates.find(({ team }) => team.country === "Portugal");
   const selected = portugal ?? candidates[0];
@@ -83,11 +113,7 @@ async function resolveTrackedTeam(tracked: TrackedTeam) {
     throw new Error(`API-SPORTS could not resolve team: ${tracked.query}`);
   }
 
-  return { ...tracked, apiTeam: selected.team };
-}
-
-function dateOnly(date: Date) {
-  return date.toISOString().slice(0, 10);
+  return { ...tracked, apiTeam: selected.team, diagnostics };
 }
 
 function statusFromApi(short: string): MatchStatus {
@@ -101,23 +127,21 @@ export async function fetchApiSportsFootballFeed() {
   const resolvedTeams = await Promise.all(trackedTeams.map(resolveTrackedTeam));
   const apiToLocal = new Map(resolvedTeams.map((team) => [team.apiTeam.id, team.localTeamId]));
 
-  const today = new Date();
-  const from = new Date(today);
-  from.setDate(from.getDate() - 14);
-  const to = new Date(today);
-  to.setDate(to.getDate() + 7);
+  const fixtureRequests = resolvedTeams.flatMap((team) => [
+    { team, kind: "last" as const, path: `/fixtures?team=${team.apiTeam.id}&last=5&timezone=Europe%2FLisbon` },
+    { team, kind: "next" as const, path: `/fixtures?team=${team.apiTeam.id}&next=10&timezone=Europe%2FLisbon` },
+  ]);
 
-  const fixturePayloads = await Promise.all(
-    resolvedTeams.map((team) =>
-      apiFetch<FixturesResponse>(
-        `/fixtures?team=${team.apiTeam.id}&from=${dateOnly(from)}&to=${dateOnly(to)}&timezone=Europe%2FLisbon`,
-      ),
-    ),
+  const fixtureResponses = await Promise.all(
+    fixtureRequests.map(async (request) => {
+      const result = await apiFetch<FixturesResponse>(request.path);
+      return { ...request, ...result };
+    }),
   );
 
   const fixtureById = new Map<number, FixtureResponseItem>();
-  for (const payload of fixturePayloads) {
-    for (const fixture of payload.response ?? []) fixtureById.set(fixture.fixture.id, fixture);
+  for (const response of fixtureResponses) {
+    for (const fixture of response.payload.response ?? []) fixtureById.set(fixture.fixture.id, fixture);
   }
 
   const liveTeams = new Map<string, Team>();
@@ -174,6 +198,18 @@ export async function fetchApiSportsFootballFeed() {
       apiTeamName: team.apiTeam.name,
       localTeamId: team.localTeamId,
     })),
+    diagnostics: {
+      teamResolution: resolvedTeams.map((team) => ({
+        query: team.query,
+        ...team.diagnostics,
+      })),
+      fixtures: fixtureResponses.map((response) => ({
+        query: response.team.query,
+        kind: response.kind,
+        ...response.diagnostics,
+        responseCount: response.payload.response?.length ?? 0,
+      })),
+    },
     teams: Array.from(liveTeams.values()),
     matches,
   };
