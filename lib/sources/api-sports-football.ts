@@ -139,6 +139,23 @@ export async function fetchApiSportsFootballFeed() {
     }),
   );
 
+  // Temporary free-plan diagnostics for Benfica to determine which fixture access patterns are available.
+  const benfica = resolvedTeams.find((team) => team.localTeamId === "benfica-senior");
+  const seasonAccessRequests = benfica
+    ? [
+        { kind: "season-2026", path: `/fixtures?team=${benfica.apiTeam.id}&season=2026&timezone=Europe%2FLisbon` },
+        { kind: "august-2026", path: `/fixtures?team=${benfica.apiTeam.id}&from=2026-08-01&to=2026-08-31&timezone=Europe%2FLisbon` },
+        { kind: "season-2025", path: `/fixtures?team=${benfica.apiTeam.id}&season=2025&timezone=Europe%2FLisbon` },
+      ]
+    : [];
+
+  const seasonAccessResponses = await Promise.all(
+    seasonAccessRequests.map(async (request) => {
+      const result = await apiFetch<FixturesResponse>(request.path);
+      return { ...request, ...result };
+    }),
+  );
+
   const fixtureById = new Map<number, FixtureResponseItem>();
   for (const response of fixtureResponses) {
     for (const fixture of response.payload.response ?? []) fixtureById.set(fixture.fixture.id, fixture);
@@ -205,6 +222,12 @@ export async function fetchApiSportsFootballFeed() {
       })),
       fixtures: fixtureResponses.map((response) => ({
         query: response.team.query,
+        kind: response.kind,
+        ...response.diagnostics,
+        responseCount: response.payload.response?.length ?? 0,
+      })),
+      seasonAccess: seasonAccessResponses.map((response) => ({
+        query: "Benfica",
         kind: response.kind,
         ...response.diagnostics,
         responseCount: response.payload.response?.length ?? 0,
