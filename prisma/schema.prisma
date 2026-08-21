@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Sport {
+  id           String        @id
+  name         String
+  clubs        Club[]
+  competitions Competition[]
+  matches      Match[]
+}
+
+model Country {
+  id           String        @id
+  name         String
+  cities       City[]
+  competitions Competition[]
+}
+
+model City {
+  id        String  @id
+  name      String
+  countryId String
+  country   Country @relation(fields: [countryId], references: [id], onDelete: Cascade)
+  clubs     Club[]
+
+  @@index([countryId])
+}
+
+model Club {
+  id               String  @id
+  name             String
+  shortName        String?
+  cityId           String
+  sportId          String
+  sourceProvider   String?
+  sourceExternalId String?
+  sourceUrl        String?
+  city             City    @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  sport            Sport   @relation(fields: [sportId], references: [id], onDelete: Cascade)
+  teams            Team[]
+
+  @@index([cityId, sportId])
+  @@unique([sourceProvider, sourceExternalId])
+}
+
+model Team {
+  id               String  @id
+  clubId           String
+  name             String
+  category         String
+  sourceProvider   String?
+  sourceExternalId String?
+  sourceUrl        String?
+  club             Club    @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  homeMatches      Match[] @relation("HomeTeam")
+  awayMatches      Match[] @relation("AwayTeam")
+
+  @@index([clubId])
+  @@unique([sourceProvider, sourceExternalId])
+}
+
+model Competition {
+  id               String  @id
+  sportId          String
+  countryId        String?
+  name             String
+  season           String?
+  sourceProvider   String?
+  sourceExternalId String?
+  sourceUrl        String?
+  sport            Sport   @relation(fields: [sportId], references: [id], onDelete: Cascade)
+  country          Country? @relation(fields: [countryId], references: [id], onDelete: SetNull)
+  matches          Match[]
+
+  @@index([sportId])
+  @@unique([sourceProvider, sourceExternalId])
+}
+
+model Match {
+  id               String      @id
+  sportId          String
+  competitionId    String
+  homeTeamId       String
+  awayTeamId       String
+  scheduledAt      DateTime
+  venue            String?
+  status           MatchStatus
+  homeScore        Int?
+  awayScore        Int?
+  sourceProvider   String
+  sourceExternalId String
+  sourceUrl        String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  sport            Sport       @relation(fields: [sportId], references: [id], onDelete: Cascade)
+  competition      Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  homeTeam         Team        @relation("HomeTeam", fields: [homeTeamId], references: [id], onDelete: Cascade)
+  awayTeam         Team        @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt])
+  @@index([sportId, scheduledAt])
+  @@unique([sourceProvider, sourceExternalId])
+}
+
+enum MatchStatus {
+  scheduled
+  finished
+  postponed
+  cancelled
+}
