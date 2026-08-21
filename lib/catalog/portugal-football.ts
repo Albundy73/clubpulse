@@ -13,8 +13,7 @@ export const PORTUGAL_FOOTBALL_CITIES = [
   { id: "faro", name: "Faro", countryId: PORTUGAL.id },
 ] as const;
 
-export type TrackedFootballTeam = {
-  query: string;
+export type CanonicalFootballTeam = {
   localTeamId: string;
   club: {
     id: string;
@@ -25,22 +24,19 @@ export type TrackedFootballTeam = {
 
 /**
  * Canonical ClubPulse identities for teams we explicitly track.
- * Provider-specific IDs are resolved at ingestion time and are never used as
- * the canonical identity for a local club/team.
+ * Provider search terms and provider IDs deliberately live in connectors,
+ * while city/club identity lives here.
  */
-export const TRACKED_PORTUGAL_FOOTBALL_TEAMS: readonly TrackedFootballTeam[] = [
+export const TRACKED_PORTUGAL_FOOTBALL_TEAMS: readonly CanonicalFootballTeam[] = [
   {
-    query: "Benfica",
     localTeamId: "benfica-senior",
     club: { id: "benfica-football", name: "SL Benfica", cityId: "lisbon" },
   },
   {
-    query: "Sporting CP",
     localTeamId: "sporting-senior",
     club: { id: "sporting-football", name: "Sporting CP", cityId: "lisbon" },
   },
   {
-    query: "Farense",
     localTeamId: "farense-senior",
     club: { id: "farense-football", name: "SC Farense", cityId: "faro" },
   },
