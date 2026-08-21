@@ -4,9 +4,12 @@ import { ingestTheSportsDbFootball } from "@/lib/ingestion/thesportsdb-football"
 export const dynamic = "force-dynamic";
 
 function authorized(request: NextRequest) {
-  const secret = process.env.INGEST_SECRET ?? process.env.CRON_SECRET;
-  if (!secret) return false;
-  return request.headers.get("authorization") === `Bearer ${secret}`;
+  const authorization = request.headers.get("authorization");
+  const acceptedSecrets = [process.env.INGEST_SECRET, process.env.CRON_SECRET].filter(
+    (secret): secret is string => Boolean(secret),
+  );
+
+  return acceptedSecrets.some((secret) => authorization === `Bearer ${secret}`);
 }
 
 async function run(request: NextRequest) {
