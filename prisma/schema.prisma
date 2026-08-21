@@ -9,7 +9,7 @@ datasource db {
 
 model Sport {
   id           String        @id
-  name         String
+  name         String        @unique
   clubs        Club[]
   competitions Competition[]
   matches      Match[]
@@ -30,22 +30,27 @@ model City {
   clubs     Club[]
 
   @@index([countryId])
+  @@unique([countryId, name])
 }
 
 model Club {
   id               String  @id
   name             String
   shortName        String?
-  cityId           String
+  // cityId is intentionally nullable. ClubPulse only assigns a city when we
+  // know it; opponents discovered from a provider must not be put in a fake
+  // "External" city just to satisfy a foreign key.
+  cityId           String?
   sportId          String
   sourceProvider   String?
   sourceExternalId String?
   sourceUrl        String?
-  city             City    @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  city             City?   @relation(fields: [cityId], references: [id], onDelete: SetNull)
   sport            Sport   @relation(fields: [sportId], references: [id], onDelete: Cascade)
   teams            Team[]
 
   @@index([cityId, sportId])
+  @@index([sportId])
   @@unique([sourceProvider, sourceExternalId])
 }
 
@@ -79,6 +84,7 @@ model Competition {
   matches          Match[]
 
   @@index([sportId])
+  @@index([sportId, countryId])
   @@unique([sourceProvider, sourceExternalId])
 }
 
@@ -105,6 +111,8 @@ model Match {
 
   @@index([scheduledAt])
   @@index([sportId, scheduledAt])
+  @@index([homeTeamId, scheduledAt])
+  @@index([awayTeamId, scheduledAt])
   @@unique([sourceProvider, sourceExternalId])
 }
 
