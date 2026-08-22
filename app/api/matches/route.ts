@@ -3,12 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const cityId = request.nextUrl.searchParams.get("cityId");
-  const sportId = request.nextUrl.searchParams.get("sportId");
+  const competitionIds = request.nextUrl.searchParams.getAll("competitionId").filter(Boolean);
+  const teamIds = request.nextUrl.searchParams.getAll("teamId").filter(Boolean);
 
-  if (!cityId || !sportId) {
+  if (competitionIds.length === 0) {
     return NextResponse.json(
-      { matches: [], teams: [], localTeamIds: [], error: "cityId and sportId are required" },
+      { matches: [], teams: [], followedTeamIds: teamIds, error: "at least one competitionId is required" },
       { status: 400 },
     );
   }
@@ -18,16 +18,20 @@ export async function GET(request: NextRequest) {
 
     const rows = await prisma.match.findMany({
       where: {
-        sportId,
-        OR: [
-          { homeTeam: { club: { cityId } } },
-          { awayTeam: { club: { cityId } } },
-        ],
+        competitionId: { in: competitionIds },
+        ...(teamIds.length > 0
+          ? {
+              OR: [
+                { homeTeamId: { in: teamIds } },
+                { awayTeamId: { in: teamIds } },
+              ],
+            }
+          : {}),
       },
       include: {
         competition: true,
-        homeTeam: { include: { club: true } },
-        awayTeam: { include: { club: true } },
+        homeTeam: true,
+        awayTeam: true,
       },
       orderBy: { scheduledAt: "asc" },
     });
@@ -42,7 +46,6 @@ export async function GET(request: NextRequest) {
         source: { provider: string; externalId: string; url?: string };
       }
     >();
-    const localTeamIds = new Set<string>();
 
     for (const row of rows) {
       for (const team of [row.homeTeam, row.awayTeam]) {
@@ -57,7 +60,6 @@ export async function GET(request: NextRequest) {
             url: team.sourceUrl ?? undefined,
           },
         });
-        if (team.club.cityId === cityId) localTeamIds.add(team.id);
       }
     }
 
@@ -82,9 +84,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       source: "ClubPulse PostgreSQL",
-      cityId,
-      sportId,
-      localTeamIds: Array.from(localTeamIds),
+      competitionIds,
+      followedTeamIds: teamIds,
       teams: Array.from(teamById.values()),
       matches,
     });
@@ -93,7 +94,7 @@ export async function GET(request: NextRequest) {
       {
         source: "ClubPulse PostgreSQL",
         teams: [],
-        localTeamIds: [],
+        followedTeamIds: teamIds,
         matches: [],
         error: error instanceof Error ? error.message : "Database unavailable",
       },
