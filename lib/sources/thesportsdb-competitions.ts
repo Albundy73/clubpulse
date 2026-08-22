@@ -9,8 +9,7 @@ type SportsDbLeague = {
   strLeagueAlternate?: string | null;
 };
 
-type LeagueSearchResponse = {
-  countries?: SportsDbLeague[] | null;
+type LeagueLookupResponse = {
   leagues?: SportsDbLeague[] | null;
 };
 
@@ -23,47 +22,44 @@ export type DiscoveredCompetition = {
   alternateName?: string;
 };
 
-// Initial ClubPulse football scope. We still discover these through the
-// provider instead of hard-coding display metadata, but restrict the product
-// catalog to a deliberate, testable set while competition-first UX is built.
-const TARGET_LEAGUE_IDS = new Set([
+// Deliberate MVP catalog. Metadata is still resolved dynamically from
+// TheSportsDB so provider naming changes do not have to be duplicated here.
+export const SUPPORTED_FOOTBALL_COMPETITION_EXTERNAL_IDS = [
   "4344", // Portuguese Primeira Liga / Liga Portugal
   "4662", // Portuguese LigaPro / Liga Portugal 2
   "4510", // Taca de Portugal
   "4334", // French Ligue 1
   "4401", // French Ligue 2
-]);
+  "4480", // UEFA Champions League
+  "4481", // UEFA Europa League
+] as const;
 
-async function fetchCountryLeagues(country: "Portugal" | "France") {
-  const params = new URLSearchParams({ c: country, s: "Soccer" });
-  const response = await fetch(`${API_BASE_URL}/search_all_leagues.php?${params.toString()}`, {
+export const SUPPORTED_FOOTBALL_COMPETITION_IDS = SUPPORTED_FOOTBALL_COMPETITION_EXTERNAL_IDS.map(
+  (externalId) => `${PROVIDER}-league-${externalId}`,
+);
+
+async function fetchLeague(externalId: string) {
+  const response = await fetch(`${API_BASE_URL}/lookupleague.php?id=${encodeURIComponent(externalId)}`, {
     headers: { Accept: "application/json" },
     cache: "no-store",
   });
 
   if (!response.ok) {
-    throw new Error(`TheSportsDB competition discovery failed (${response.status}) for ${country}`);
+    throw new Error(`TheSportsDB league lookup failed (${response.status}) for ${externalId}`);
   }
 
-  const payload = await response.json() as LeagueSearchResponse;
-  return payload.countries ?? payload.leagues ?? [];
+  const payload = await response.json() as LeagueLookupResponse;
+  return payload.leagues?.[0] ?? null;
 }
 
 export async function fetchTheSportsDbFootballCompetitions(): Promise<DiscoveredCompetition[]> {
-  const responses = await Promise.all([
-    fetchCountryLeagues("Portugal"),
-    fetchCountryLeagues("France"),
-  ]);
+  const leagues = await Promise.all(
+    SUPPORTED_FOOTBALL_COMPETITION_EXTERNAL_IDS.map((externalId) => fetchLeague(externalId)),
+  );
 
-  const byId = new Map<string, SportsDbLeague>();
-  for (const leagues of responses) {
-    for (const league of leagues) {
-      if (TARGET_LEAGUE_IDS.has(league.idLeague)) byId.set(league.idLeague, league);
-    }
-  }
-
-  return Array.from(byId.values())
-    .filter((league) => league.idLeague && league.strLeague)
+  return leagues
+    .filter((league): league is SportsDbLeague => Boolean(league?.idLeague && league.strLeague))
+    .filter((league) => league.strSport === "Soccer" || !league.strSport)
     .map((league) => ({
       id: `${PROVIDER}-league-${league.idLeague}`,
       externalId: league.idLeague,
