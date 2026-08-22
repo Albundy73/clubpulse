@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ingestTheSportsDbFootball } from "@/lib/ingestion/thesportsdb-football";
 import { syncTheSportsDbCompetitionCatalog } from "@/lib/ingestion/thesportsdb-competition-catalog";
+import { syncTheSportsDbCompetitionTeamCatalog } from "@/lib/ingestion/thesportsdb-team-catalog";
 
 export const dynamic = "force-dynamic";
 
@@ -27,8 +28,15 @@ async function run(request: NextRequest) {
 
   try {
     const result = await ingestTheSportsDbFootball();
-    const catalog = await syncTheSportsDbCompetitionCatalog();
-    return NextResponse.json({ ok: true, ...result, ...catalog });
+    const competitionCatalog = await syncTheSportsDbCompetitionCatalog();
+    const teamCatalog = await syncTheSportsDbCompetitionTeamCatalog();
+
+    return NextResponse.json({
+      ok: true,
+      ...result,
+      ...competitionCatalog,
+      ...teamCatalog,
+    });
   } catch (error) {
     return NextResponse.json(
       {
