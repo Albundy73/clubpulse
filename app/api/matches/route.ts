@@ -2,13 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+function csvParam(request: NextRequest, name: string) {
+  return (request.nextUrl.searchParams.get(name) ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export async function GET(request: NextRequest) {
+  const competitionIds = csvParam(request, "competitionIds");
+  const teamIds = csvParam(request, "teamIds");
   const cityId = request.nextUrl.searchParams.get("cityId");
   const sportId = request.nextUrl.searchParams.get("sportId");
+  const competitionMode = competitionIds.length > 0;
+  const legacyCityMode = Boolean(cityId && sportId);
 
-  if (!cityId || !sportId) {
+  if (!competitionMode && !legacyCityMode) {
     return NextResponse.json(
-      { matches: [], teams: [], localTeamIds: [], error: "cityId and sportId are required" },
+      {
+        matches: [],
+        teams: [],
+        localTeamIds: [],
+        error: "competitionIds is required (legacy cityId + sportId is also temporarily supported)",
+      },
       { status: 400 },
     );
   }
@@ -16,21 +32,41 @@ export async function GET(request: NextRequest) {
   try {
     const { prisma } = await import("@/lib/db");
 
-    const rows = await prisma.match.findMany({
-      where: {
-        sportId,
-        OR: [
-          { homeTeam: { club: { cityId } } },
-          { awayTeam: { club: { cityId } } },
-        ],
-      },
-      include: {
-        competition: true,
-        homeTeam: { include: { club: true } },
-        awayTeam: { include: { club: true } },
-      },
-      orderBy: { scheduledAt: "asc" },
-    });
+    const rows = competitionMode
+      ? await prisma.match.findMany({
+          where: {
+            competitionId: { in: competitionIds },
+            ...(teamIds.length > 0
+              ? {
+                  OR: [
+                    { homeTeamId: { in: teamIds } },
+                    { awayTeamId: { in: teamIds } },
+                  ],
+                }
+              : {}),
+          },
+          include: {
+            competition: true,
+            homeTeam: { include: { club: true } },
+            awayTeam: { include: { club: true } },
+          },
+          orderBy: { scheduledAt: "asc" },
+        })
+      : await prisma.match.findMany({
+          where: {
+            sportId: sportId!,
+            OR: [
+              { homeTeam: { club: { cityId: cityId! } } },
+              { awayTeam: { club: { cityId: cityId! } } },
+            ],
+          },
+          include: {
+            competition: true,
+            homeTeam: { include: { club: true } },
+            awayTeam: { include: { club: true } },
+          },
+          orderBy: { scheduledAt: "asc" },
+        });
 
     const teamById = new Map<
       string,
@@ -57,7 +93,7 @@ export async function GET(request: NextRequest) {
             url: team.sourceUrl ?? undefined,
           },
         });
-        if (team.club.cityId === cityId) localTeamIds.add(team.id);
+        if (cityId && team.club.cityId === cityId) localTeamIds.add(team.id);
       }
     }
 
@@ -82,8 +118,11 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       source: "ClubPulse PostgreSQL",
-      cityId,
-      sportId,
+      mode: competitionMode ? "competition" : "legacy-city",
+      competitionIds: competitionMode ? competitionIds : undefined,
+      selectedTeamIds: competitionMode ? teamIds : undefined,
+      cityId: legacyCityMode ? cityId : undefined,
+      sportId: legacyCityMode ? sportId : undefined,
       localTeamIds: Array.from(localTeamIds),
       teams: Array.from(teamById.values()),
       matches,
