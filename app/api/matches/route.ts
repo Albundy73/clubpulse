@@ -2,13 +2,37 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
-  const competitionIds = request.nextUrl.searchParams.getAll("competitionId").filter(Boolean);
-  const teamIds = request.nextUrl.searchParams.getAll("teamId").filter(Boolean);
+type ParsedSelection = {
+  competitionId: string;
+  teamIds: string[];
+};
 
-  if (competitionIds.length === 0) {
+function parseSelections(request: NextRequest): ParsedSelection[] {
+  const grouped = new Map<string, Set<string>>();
+
+  for (const raw of request.nextUrl.searchParams.getAll("selection")) {
+    const separator = raw.indexOf(":");
+    if (separator <= 0 || separator === raw.length - 1) continue;
+
+    const competitionId = raw.slice(0, separator);
+    const teamId = raw.slice(separator + 1);
+    const teams = grouped.get(competitionId) ?? new Set<string>();
+    teams.add(teamId);
+    grouped.set(competitionId, teams);
+  }
+
+  return Array.from(grouped.entries()).map(([competitionId, teamIds]) => ({
+    competitionId,
+    teamIds: Array.from(teamIds),
+  }));
+}
+
+export async function GET(request: NextRequest) {
+  const selections = parseSelections(request);
+
+  if (selections.length === 0) {
     return NextResponse.json(
-      { matches: [], teams: [], followedTeamIds: teamIds, error: "at least one competitionId is required" },
+      { matches: [], teams: [], followedTeamIds: [], error: "at least one competition/team selection is required" },
       { status: 400 },
     );
   }
@@ -18,15 +42,13 @@ export async function GET(request: NextRequest) {
 
     const rows = await prisma.match.findMany({
       where: {
-        competitionId: { in: competitionIds },
-        ...(teamIds.length > 0
-          ? {
-              OR: [
-                { homeTeamId: { in: teamIds } },
-                { awayTeamId: { in: teamIds } },
-              ],
-            }
-          : {}),
+        OR: selections.map((selection) => ({
+          competitionId: selection.competitionId,
+          OR: [
+            { homeTeamId: { in: selection.teamIds } },
+            { awayTeamId: { in: selection.teamIds } },
+          ],
+        })),
       },
       include: {
         competition: true,
@@ -84,8 +106,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       source: "ClubPulse PostgreSQL",
-      competitionIds,
-      followedTeamIds: teamIds,
+      selections,
+      followedTeamIds: Array.from(new Set(selections.flatMap((selection) => selection.teamIds))),
       teams: Array.from(teamById.values()),
       matches,
     });
@@ -94,7 +116,7 @@ export async function GET(request: NextRequest) {
       {
         source: "ClubPulse PostgreSQL",
         teams: [],
-        followedTeamIds: teamIds,
+        followedTeamIds: [],
         matches: [],
         error: error instanceof Error ? error.message : "Database unavailable",
       },
