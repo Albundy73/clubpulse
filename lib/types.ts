@@ -66,8 +66,15 @@ export type Match = {
   source: EntitySource;
 };
 
+/** Legacy preference shape kept until the dashboard migration is complete. */
 export type UserPreferences = {
   countryId: string;
   cityId: string;
   sportIds: string[];
+};
+
+/** Target preference model for competition-first onboarding/dashboard. */
+export type CompetitionPreferences = {
+  competitionIds: string[];
+  teamIds: string[];
 };
