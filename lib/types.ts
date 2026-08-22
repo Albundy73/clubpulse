@@ -49,6 +49,7 @@ export type Competition = {
 };
 
 export type CompetitionOption = Competition & {
+  sportName?: string;
   teams: Team[];
 };
 
@@ -69,7 +70,11 @@ export type Match = {
   source: EntitySource;
 };
 
-export type UserPreferences = {
-  competitionIds: string[];
+export type CompetitionSelection = {
+  competitionId: string;
   teamIds: string[];
+};
+
+export type UserPreferences = {
+  selections: CompetitionSelection[];
 };
