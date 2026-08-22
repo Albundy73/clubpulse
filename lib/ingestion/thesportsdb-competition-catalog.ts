@@ -3,21 +3,36 @@ import { fetchTheSportsDbFootballCompetitions } from "@/lib/sources/thesportsdb-
 
 const PROVIDER = "thesportsdb";
 const FOOTBALL_SPORT_ID = "football";
+const COUNTRY_BY_PROVIDER_NAME = new Map([
+  ["Portugal", { id: "pt", name: "Portugal" }],
+  ["France", { id: "fr", name: "France" }],
+]);
 
 export async function syncTheSportsDbCompetitionCatalog() {
   const discovered = await fetchTheSportsDbFootballCompetitions();
 
+  for (const country of COUNTRY_BY_PROVIDER_NAME.values()) {
+    await prisma.country.upsert({
+      where: { id: country.id },
+      create: country,
+      update: { name: country.name },
+    });
+  }
+
   let competitionsUpserted = 0;
   for (const competition of discovered) {
     const existing = await prisma.competition.findUnique({ where: { id: competition.id } });
-    const portugalCountryId = competition.country === "Portugal" ? "pt" : existing?.countryId ?? null;
+    const mappedCountry = competition.country
+      ? COUNTRY_BY_PROVIDER_NAME.get(competition.country)
+      : undefined;
+    const countryId = mappedCountry?.id ?? existing?.countryId ?? null;
 
     await prisma.competition.upsert({
       where: { id: competition.id },
       create: {
         id: competition.id,
         sportId: FOOTBALL_SPORT_ID,
-        countryId: portugalCountryId,
+        countryId,
         name: competition.name,
         season: null,
         sourceProvider: PROVIDER,
@@ -25,7 +40,7 @@ export async function syncTheSportsDbCompetitionCatalog() {
       },
       update: {
         sportId: FOOTBALL_SPORT_ID,
-        countryId: portugalCountryId,
+        countryId,
         name: competition.name,
         sourceProvider: PROVIDER,
         sourceExternalId: competition.externalId,
