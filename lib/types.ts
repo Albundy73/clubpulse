@@ -48,13 +48,17 @@ export type Competition = {
   source?: EntitySource;
 };
 
+export type CompetitionOption = Competition & {
+  sportName?: string;
+  teams: Team[];
+};
+
 export type MatchStatus = "scheduled" | "finished" | "postponed" | "cancelled";
 
 export type Match = {
   id: string;
   sportId: string;
   competitionId: string;
-  /** Temporary denormalized label for the current UI. competitionId is canonical. */
   competition: string;
   homeTeamId: string;
   awayTeamId: string;
@@ -66,8 +70,11 @@ export type Match = {
   source: EntitySource;
 };
 
+export type CompetitionSelection = {
+  competitionId: string;
+  teamIds: string[];
+};
+
 export type UserPreferences = {
-  countryId: string;
-  cityId: string;
-  sportIds: string[];
+  selections: CompetitionSelection[];
 };

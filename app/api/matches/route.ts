@@ -2,13 +2,37 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
-  const cityId = request.nextUrl.searchParams.get("cityId");
-  const sportId = request.nextUrl.searchParams.get("sportId");
+type ParsedSelection = {
+  competitionId: string;
+  teamIds: string[];
+};
 
-  if (!cityId || !sportId) {
+function parseSelections(request: NextRequest): ParsedSelection[] {
+  const grouped = new Map<string, Set<string>>();
+
+  for (const raw of request.nextUrl.searchParams.getAll("selection")) {
+    const separator = raw.indexOf(":");
+    if (separator <= 0 || separator === raw.length - 1) continue;
+
+    const competitionId = raw.slice(0, separator);
+    const teamId = raw.slice(separator + 1);
+    const teams = grouped.get(competitionId) ?? new Set<string>();
+    teams.add(teamId);
+    grouped.set(competitionId, teams);
+  }
+
+  return Array.from(grouped.entries()).map(([competitionId, teamIds]) => ({
+    competitionId,
+    teamIds: Array.from(teamIds),
+  }));
+}
+
+export async function GET(request: NextRequest) {
+  const selections = parseSelections(request);
+
+  if (selections.length === 0) {
     return NextResponse.json(
-      { matches: [], teams: [], localTeamIds: [], error: "cityId and sportId are required" },
+      { matches: [], teams: [], followedTeamIds: [], error: "at least one competition/team selection is required" },
       { status: 400 },
     );
   }
@@ -18,16 +42,18 @@ export async function GET(request: NextRequest) {
 
     const rows = await prisma.match.findMany({
       where: {
-        sportId,
-        OR: [
-          { homeTeam: { club: { cityId } } },
-          { awayTeam: { club: { cityId } } },
-        ],
+        OR: selections.map((selection) => ({
+          competitionId: selection.competitionId,
+          OR: [
+            { homeTeamId: { in: selection.teamIds } },
+            { awayTeamId: { in: selection.teamIds } },
+          ],
+        })),
       },
       include: {
         competition: true,
-        homeTeam: { include: { club: true } },
-        awayTeam: { include: { club: true } },
+        homeTeam: true,
+        awayTeam: true,
       },
       orderBy: { scheduledAt: "asc" },
     });
@@ -42,7 +68,6 @@ export async function GET(request: NextRequest) {
         source: { provider: string; externalId: string; url?: string };
       }
     >();
-    const localTeamIds = new Set<string>();
 
     for (const row of rows) {
       for (const team of [row.homeTeam, row.awayTeam]) {
@@ -57,7 +82,6 @@ export async function GET(request: NextRequest) {
             url: team.sourceUrl ?? undefined,
           },
         });
-        if (team.club.cityId === cityId) localTeamIds.add(team.id);
       }
     }
 
@@ -82,9 +106,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       source: "ClubPulse PostgreSQL",
-      cityId,
-      sportId,
-      localTeamIds: Array.from(localTeamIds),
+      selections,
+      followedTeamIds: Array.from(new Set(selections.flatMap((selection) => selection.teamIds))),
       teams: Array.from(teamById.values()),
       matches,
     });
@@ -93,7 +116,7 @@ export async function GET(request: NextRequest) {
       {
         source: "ClubPulse PostgreSQL",
         teams: [],
-        localTeamIds: [],
+        followedTeamIds: [],
         matches: [],
         error: error instanceof Error ? error.message : "Database unavailable",
       },
