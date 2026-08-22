@@ -37,9 +37,6 @@ model Club {
   id               String  @id
   name             String
   shortName        String?
-  // cityId is intentionally nullable. ClubPulse only assigns a city when we
-  // know it; opponents discovered from a provider must not be put in a fake
-  // "External" city just to satisfy a foreign key.
   cityId           String?
   sportId          String
   sourceProvider   String?
@@ -63,6 +60,7 @@ model Team {
   sourceExternalId String?
   sourceUrl        String?
   club             Club    @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  competitions     CompetitionTeam[]
   homeMatches      Match[] @relation("HomeTeam")
   awayMatches      Match[] @relation("AwayTeam")
 
@@ -81,11 +79,23 @@ model Competition {
   sourceUrl        String?
   sport            Sport   @relation(fields: [sportId], references: [id], onDelete: Cascade)
   country          Country? @relation(fields: [countryId], references: [id], onDelete: SetNull)
+  teams            CompetitionTeam[]
   matches          Match[]
 
   @@index([sportId])
   @@index([sportId, countryId])
   @@unique([sourceProvider, sourceExternalId])
+}
+
+model CompetitionTeam {
+  competitionId String
+  teamId        String
+  discoveredAt  DateTime    @default(now())
+  competition   Competition @relation(fields: [competitionId], references: [id], onDelete: Cascade)
+  team          Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([competitionId, teamId])
+  @@index([teamId])
 }
 
 model Match {
@@ -110,6 +120,7 @@ model Match {
   awayTeam         Team        @relation("AwayTeam", fields: [awayTeamId], references: [id], onDelete: Cascade)
 
   @@index([scheduledAt])
+  @@index([competitionId, scheduledAt])
   @@index([sportId, scheduledAt])
   @@index([homeTeamId, scheduledAt])
   @@index([awayTeamId, scheduledAt])
