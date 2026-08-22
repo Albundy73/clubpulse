@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { SUPPORTED_FOOTBALL_COMPETITION_IDS } from "@/lib/sources/thesportsdb-competitions";
 
 export const dynamic = "force-dynamic";
 
@@ -7,6 +8,9 @@ export async function GET() {
     const { prisma } = await import("@/lib/db");
 
     const competitions = await prisma.competition.findMany({
+      where: {
+        id: { in: SUPPORTED_FOOTBALL_COMPETITION_IDS },
+      },
       include: {
         sport: true,
         country: true,
