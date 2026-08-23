@@ -1,0 +1,49 @@
+name: Refresh TheSportsDB catalog
+
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  refresh-catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Refresh ClubPulse competition and team catalog
+        env:
+          INGEST_URL: ${{ secrets.CLUBPULSE_INGEST_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${INGEST_URL:-}" ]; then
+            echo "Missing GitHub secret: CLUBPULSE_INGEST_URL"
+            exit 1
+          fi
+          if [ -z "${INGEST_SECRET:-}" ]; then
+            echo "Missing GitHub secret: INGEST_SECRET"
+            exit 1
+          fi
+          if [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            echo "Missing GitHub secret: VERCEL_AUTOMATION_BYPASS_SECRET"
+            exit 1
+          fi
+
+          CATALOG_URL="${INGEST_URL%/}/catalog"
+          response_file=$(mktemp)
+          http_code=$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out "%{http_code}" \
+            --request POST \
+            --header "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
+            --header "Authorization: Bearer $INGEST_SECRET" \
+            "$CATALOG_URL")
+
+          cat "$response_file"
+          echo
+
+          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+            echo "Catalog refresh failed with HTTP $http_code"
+            exit 1
+          fi
