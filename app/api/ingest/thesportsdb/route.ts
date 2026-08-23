@@ -26,6 +26,32 @@ async function run(request: NextRequest) {
 
   try {
     const result = await ingestTheSportsDbFootball();
+
+    if (process.env.VERCEL_ENV === "preview") {
+      const { prisma } = await import("@/lib/db");
+      const start = new Date();
+      start.setUTCHours(0, 0, 0, 0);
+      const end = new Date(start);
+      end.setUTCDate(end.getUTCDate() + 1);
+      const todayMatches = await prisma.match.findMany({
+        where: { scheduledAt: { gte: start, lt: end } },
+        include: { competition: true, homeTeam: true, awayTeam: true },
+        orderBy: { scheduledAt: "asc" },
+      });
+      console.info(
+        "Preview today's ingested matches",
+        todayMatches.map((match) => ({
+          eventId: match.sourceExternalId,
+          competition: match.competition.name,
+          home: match.homeTeam.name,
+          away: match.awayTeam.name,
+          scheduledAt: match.scheduledAt.toISOString(),
+          status: match.status,
+          score: match.homeScore === null || match.awayScore === null ? null : `${match.homeScore}-${match.awayScore}`,
+        })),
+      );
+    }
+
     return NextResponse.json({ ok: true, mode: "matches", ...result });
   } catch (error) {
     console.error("TheSportsDB match ingestion failed", error);
