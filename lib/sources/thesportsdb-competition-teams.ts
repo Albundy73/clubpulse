@@ -65,12 +65,48 @@ async function fetchHtml(url: string) {
   return response.ok ? response.text() : null;
 }
 
+function isGenericTeamLabel(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return !normalized || [
+    "home",
+    "away",
+    "home icon",
+    "away icon",
+    "home team",
+    "away team",
+    "team",
+    "team icon",
+    "badge",
+    "logo",
+    "image",
+  ].includes(normalized);
+}
+
+function teamNameFromSlug(slug: string) {
+  return decodeHtml(
+    slug
+      .replace(/-/g, " ")
+      .replace(/\bfc\b/gi, "FC")
+      .replace(/\bsc\b/gi, "SC")
+      .replace(/\bafc\b/gi, "AFC")
+      .replace(/\bcf\b/gi, "CF"),
+  );
+}
+
 function teamNameFromAnchor(anchorBody: string, slug: string) {
-  const alt = anchorBody.match(/\balt=["']([^"']+)["']/i)?.[1];
   const text = decodeHtml(anchorBody.replace(/<[^>]*>/g, " "));
-  if (text && !/^image\b/i.test(text)) return text;
-  if (alt) return decodeHtml(alt.replace(/\b(?:badge|logo|team)\b/gi, " "));
-  return decodeHtml(slug.replace(/-/g, " "));
+  if (text && !isGenericTeamLabel(text)) return text;
+
+  const alt = decodeHtml(anchorBody.match(/\balt=["']([^"']+)["']/i)?.[1] ?? "");
+  if (alt && !isGenericTeamLabel(alt)) {
+    const cleanedAlt = decodeHtml(alt.replace(/\b(?:badge|logo|team)\b/gi, " "));
+    if (cleanedAlt && !isGenericTeamLabel(cleanedAlt)) return cleanedAlt;
+  }
+
+  // Event pages frequently label the visual element only as "home", "away",
+  // "home icon", etc. The canonical /team/<id>-<slug> URL is more reliable
+  // than those presentation labels, so use its slug as the final authority.
+  return teamNameFromSlug(slug);
 }
 
 function extractCanonicalTeamLinks(html: string) {
