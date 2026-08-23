@@ -9,9 +9,12 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
     where: { sourceProvider: PROVIDER },
     select: { sourceExternalId: true, season: true },
   });
-  const seasonByExternalId = new Map(
-    competitions.map((competition) => [competition.sourceExternalId, competition.season ?? undefined]),
-  );
+  const seasonByExternalId = new Map<string, string | undefined>();
+  for (const competition of competitions) {
+    if (competition.sourceExternalId) {
+      seasonByExternalId.set(competition.sourceExternalId, competition.season ?? undefined);
+    }
+  }
   const catalogs = await fetchTheSportsDbSupportedCompetitionTeams(seasonByExternalId);
 
   let teamsObserved = 0;
@@ -58,8 +61,12 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
         teamId = existingTeam.id;
         await prisma.team.update({
           where: { id: teamId },
-          data: { name: providerTeam.strTeam, category: "Senior Men" },
+          data: {
+            name: providerTeam.strTeam,
+            category: "Senior Men",
+          },
         });
+
         await prisma.club.update({
           where: { id: existingTeam.clubId },
           data: {
@@ -130,8 +137,10 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
       matchTeamIds.add(match.awayTeamId);
     }
 
-    const authoritativeRebuild = catalog.expectedTeamCount !== undefined
-      && membershipTeamIds.size >= catalog.expectedTeamCount;
+    const expected = catalog.expectedTeamCount;
+    const authoritativeRebuild = expected
+      ? membershipTeamIds.size >= expected
+      : membershipTeamIds.size > 0;
 
     if (authoritativeRebuild) {
       const removed = await prisma.competitionTeam.deleteMany({ where: { competitionId } });
@@ -150,9 +159,7 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
       season: catalog.season,
       returnedTeams: catalog.teams.length,
       expectedTeamCount: catalog.expectedTeamCount,
-      complete: catalog.expectedTeamCount !== undefined
-        ? membershipTeamIds.size >= catalog.expectedTeamCount
-        : false,
+      complete: catalog.complete,
       authoritativeRebuild,
       sources: catalog.sources,
       matchObservedTeams: matchTeamIds.size,
