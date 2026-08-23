@@ -21,9 +21,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Push runs target the branch Preview so every ingestion change is verified there.
+          # Push runs target the branch Preview. Give Vercel time to move the
+          # branch alias to this commit before accepting a successful response.
           if [ "${{ github.event_name }}" = "push" ]; then
             INGEST_URL="https://clubpulse-git-feature-competition-first-structure-apcd.vercel.app/api/ingest/thesportsdb"
+            sleep 45
           else
             INGEST_URL="$DEFAULT_INGEST_URL"
           fi
