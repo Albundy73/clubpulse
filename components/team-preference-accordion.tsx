@@ -9,8 +9,9 @@ type Props = { competitions: CompetitionSummary[]; selectedCompetitionIds: strin
 
 function Artwork({ src, fallback, size = "h-8 w-8" }: { src?: string; fallback: string; size?: string }) {
   const [failed, setFailed] = useState(false);
-  return src && !failed
-    ? <img src={`${src}/tiny`} alt="" onError={() => setFailed(true)} className={`${size} shrink-0 object-contain`} />
+  const displaySrc = src ? (src.endsWith("/tiny") ? src : `${src}/tiny`) : undefined;
+  return displaySrc && !failed
+    ? <img src={displaySrc} alt="" onError={() => setFailed(true)} className={`${size} shrink-0 object-contain`} />
     : <span className={`flex ${size} shrink-0 items-center justify-center text-base`} aria-hidden="true">{fallback}</span>;
 }
 
