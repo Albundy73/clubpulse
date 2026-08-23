@@ -27,10 +27,6 @@ export async function ingestTheSportsDbFootball() {
     update: { name: FOOTBALL_SPORT.name },
   });
 
-  // Match discovery uses canonical TheSportsDB identities, but the database may
-  // already contain the same provider team under an older ClubPulse id (for
-  // example a previously tracked local team). Reconcile on provider identity
-  // first and remap every incoming match to the existing canonical database id.
   const canonicalTeamId = new Map<string, string>();
 
   for (const team of feed.teams) {
@@ -39,7 +35,7 @@ export async function ingestTheSportsDbFootball() {
       throw new Error(`TheSportsDB team ${team.id} is missing source metadata`);
     }
 
-    const existing = await prisma.team.findUnique({
+    const bySource = await prisma.team.findUnique({
       where: {
         sourceProvider_sourceExternalId: {
           sourceProvider: PROVIDER,
@@ -47,6 +43,8 @@ export async function ingestTheSportsDbFootball() {
         },
       },
     });
+    const byId = bySource ? null : await prisma.team.findUnique({ where: { id: team.id } });
+    const existing = bySource ?? byId;
 
     if (existing) {
       await prisma.team.update({
@@ -126,8 +124,6 @@ export async function ingestTheSportsDbFootball() {
         sourceProvider: PROVIDER,
         sourceExternalId: competition.externalId,
       },
-      // Preserve catalog-owned country and artwork fields during frequent match
-      // refreshes. Match ingestion only refreshes volatile competition metadata.
       update: {
         sportId: FOOTBALL_SPORT.id,
         name: competition.name,
