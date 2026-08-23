@@ -73,8 +73,11 @@ export type UserPreferences = {
   sportIds: string[];
 };
 
-/** Target preference model for competition-first onboarding/dashboard. */
+/**
+ * Competition-first preferences. An empty team list for a competition means
+ * "all teams" in that competition. Non-empty lists are explicit team filters.
+ */
 export type CompetitionPreferences = {
   competitionIds: string[];
-  teamIds: string[];
+  teamIdsByCompetition: Record<string, string[]>;
 };
