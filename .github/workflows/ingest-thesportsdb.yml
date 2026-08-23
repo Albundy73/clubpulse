@@ -1,6 +1,9 @@
 name: Ingest TheSportsDB
 
 on:
+  push:
+    branches:
+      - feature/competition-first-structure
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
@@ -12,13 +15,20 @@ jobs:
     steps:
       - name: Trigger ClubPulse ingestion
         env:
-          INGEST_URL: ${{ secrets.CLUBPULSE_INGEST_URL }}
+          DEFAULT_INGEST_URL: ${{ secrets.CLUBPULSE_INGEST_URL }}
           INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            INGEST_URL="https://clubpulse-git-feature-competition-first-structure-apcd.vercel.app/api/ingest/thesportsdb"
+          else
+            INGEST_URL="$DEFAULT_INGEST_URL"
+          fi
+
           if [ -z "${INGEST_URL:-}" ]; then
-            echo "Missing GitHub secret: CLUBPULSE_INGEST_URL"
+            echo "Missing ingestion URL"
             exit 1
           fi
           if [ -z "${INGEST_SECRET:-}" ]; then
@@ -31,18 +41,25 @@ jobs:
           fi
 
           response_file=$(mktemp)
-          http_code=$(curl --silent --show-error \
-            --output "$response_file" \
-            --write-out "%{http_code}" \
-            --request POST \
-            --header "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
-            --header "Authorization: Bearer $INGEST_SECRET" \
-            "$INGEST_URL")
+          for attempt in $(seq 1 18); do
+            http_code=$(curl --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request POST \
+              --header "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
+              --header "Authorization: Bearer $INGEST_SECRET" \
+              "$INGEST_URL" || true)
 
-          cat "$response_file"
-          echo
+            cat "$response_file"
+            echo
 
-          if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-            echo "Ingestion failed with HTTP $http_code"
-            exit 1
-          fi
+            if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+              exit 0
+            fi
+
+            echo "Attempt $attempt returned HTTP $http_code; waiting for Preview/dependency readiness..."
+            sleep 10
+          done
+
+          echo "Ingestion did not succeed after retries"
+          exit 1
