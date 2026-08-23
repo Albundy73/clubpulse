@@ -1,6 +1,16 @@
 name: Refresh TheSportsDB catalog
 
 on:
+  push:
+    branches:
+      - feature/competition-first-structure
+    paths:
+      - ".github/workflows/refresh-thesportsdb-catalog.yml"
+      - "app/api/ingest/thesportsdb/catalog/**"
+      - "lib/ingestion/thesportsdb-competition-catalog.ts"
+      - "lib/ingestion/thesportsdb-team-catalog.ts"
+      - "lib/sources/thesportsdb-competition-teams.ts"
+      - "lib/sources/thesportsdb-competitions.ts"
   schedule:
     - cron: "17 4 * * 1"
   workflow_dispatch:
