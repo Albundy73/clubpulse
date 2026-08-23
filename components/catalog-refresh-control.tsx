@@ -6,13 +6,15 @@ type RefreshState = "idle" | "running" | "success" | "error";
 type Diagnostic = {
   competitionName: string;
   returnedTeams: number;
-  possiblyTruncated: boolean;
+  expectedTeamCount?: number;
+  complete: boolean;
+  sources: string[];
+  matchObservedTeams: number;
 };
 
 type RefreshPayload = {
   ok?: boolean;
   error?: string;
-  competitionsCatalogUpserted?: number;
   competitionTeamsUpserted?: number;
   competitionTeamCatalogDiagnostics?: Diagnostic[];
 };
@@ -38,12 +40,16 @@ export default function CatalogRefreshControl({ dark = false }: { dark?: boolean
 
       const diagnostics = payload.competitionTeamCatalogDiagnostics ?? [];
       const summary = diagnostics.length > 0
-        ? diagnostics.map((item) => `${item.competitionName}: ${item.returnedTeams}`).join(" · ")
+        ? diagnostics.map((item) => {
+            const expected = item.expectedTeamCount ? `/${item.expectedTeamCount}` : "";
+            const marker = item.expectedTeamCount ? (item.complete ? "✓" : "⚠") : "·";
+            return `${marker} ${item.competitionName}: ${item.returnedTeams}${expected}`;
+          }).join(" · ")
         : `${payload.competitionTeamsUpserted ?? 0} teams upserted`;
 
       setState("success");
       setMessage(`Catalog refreshed · ${summary}. Reloading…`);
-      window.setTimeout(() => window.location.reload(), 1200);
+      window.setTimeout(() => window.location.reload(), 2200);
     } catch (error) {
       setState("error");
       setMessage(error instanceof Error ? error.message : "Catalog refresh failed");
