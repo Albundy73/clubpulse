@@ -36,6 +36,7 @@ export type Team = {
   clubId: string;
   name: string;
   category: string;
+  imageUrl?: string;
   source?: EntitySource;
 };
 
@@ -45,6 +46,7 @@ export type Competition = {
   name: string;
   season?: string;
   countryId?: string;
+  imageUrl?: string;
   source?: EntitySource;
 };
 
