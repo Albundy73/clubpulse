@@ -9,6 +9,7 @@ type Props = { competitions: CompetitionSummary[]; selectedCompetitionIds: strin
 
 function normalizeArtworkSrc(src?: string) {
   if (!src) return undefined;
+  // TheSportsDB may persist a sized URL; always render from the canonical base.
   const base = src.replace(/\/(?:tiny|small|medium|large|original)\/?$/i, "");
   return `${base}/tiny`;
 }
