@@ -7,6 +7,7 @@ type SportsDbLeague = {
   strSport?: string | null;
   strCountry?: string | null;
   strLeagueAlternate?: string | null;
+  strCurrentSeason?: string | null;
 };
 
 type LeagueLookupResponse = {
@@ -20,10 +21,11 @@ export type DiscoveredCompetition = {
   sport: string;
   country?: string;
   alternateName?: string;
+  season?: string;
 };
 
 // Deliberate MVP catalog. Metadata is still resolved dynamically from
-// TheSportsDB so provider naming changes do not have to be duplicated here.
+// TheSportsDB so provider naming and season changes do not have to be duplicated here.
 export const SUPPORTED_FOOTBALL_COMPETITION_EXTERNAL_IDS = [
   "4344", // Portuguese Primeira Liga / Liga Portugal
   "4662", // Portuguese LigaPro / Liga Portugal 2
@@ -67,5 +69,6 @@ export async function fetchTheSportsDbFootballCompetitions(): Promise<Discovered
       sport: league.strSport ?? "Soccer",
       country: league.strCountry ?? undefined,
       alternateName: league.strLeagueAlternate ?? undefined,
+      season: league.strCurrentSeason ?? undefined,
     }));
 }
