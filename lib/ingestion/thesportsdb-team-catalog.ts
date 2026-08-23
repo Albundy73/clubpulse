@@ -5,7 +5,14 @@ const PROVIDER = "thesportsdb";
 const FOOTBALL_SPORT_ID = "football";
 
 export async function syncTheSportsDbCompetitionTeamCatalog() {
-  const catalogs = await fetchTheSportsDbSupportedCompetitionTeams();
+  const competitions = await prisma.competition.findMany({
+    where: { sourceProvider: PROVIDER },
+    select: { sourceExternalId: true, season: true },
+  });
+  const seasonByExternalId = new Map(
+    competitions.map((competition) => [competition.sourceExternalId, competition.season ?? undefined]),
+  );
+  const catalogs = await fetchTheSportsDbSupportedCompetitionTeams(seasonByExternalId);
 
   let teamsObserved = 0;
   let teamsUpserted = 0;
@@ -14,9 +21,11 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
   const diagnostics: Array<{
     competitionId: string;
     competitionName: string;
+    season?: string;
     returnedTeams: number;
     expectedTeamCount?: number;
     complete: boolean;
+    authoritativeRebuild: boolean;
     sources: string[];
     matchObservedTeams: number;
   }> = [];
@@ -49,14 +58,8 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
         teamId = existingTeam.id;
         await prisma.team.update({
           where: { id: teamId },
-          data: {
-            name: providerTeam.strTeam,
-            category: "Senior Men",
-          },
+          data: { name: providerTeam.strTeam, category: "Senior Men" },
         });
-
-        // Preserve canonical ClubPulse club IDs/city mappings for teams such as
-        // Benfica and Sporting while refreshing provider-backed display data.
         await prisma.club.update({
           where: { id: existingTeam.clubId },
           data: {
@@ -115,8 +118,6 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
       membershipTeamIds.add(teamId);
     }
 
-    // Stored fixtures are also trusted evidence of membership. This preserves
-    // legitimate teams when the free catalog endpoints return a capped subset.
     const matches = await prisma.match.findMany({
       where: { competitionId },
       select: { homeTeamId: true, awayTeamId: true },
@@ -129,11 +130,13 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
       matchTeamIds.add(match.awayTeamId);
     }
 
-    // Membership is a synchronized set, not an append-only history. Removing
-    // everything first cleans the bogus teams introduced by the old legacy
-    // lookup_all_teams endpoint and prevents counts from growing on refresh.
-    const removed = await prisma.competitionTeam.deleteMany({ where: { competitionId } });
-    staleMembershipsRemoved += removed.count;
+    const authoritativeRebuild = catalog.expectedTeamCount !== undefined
+      && membershipTeamIds.size >= catalog.expectedTeamCount;
+
+    if (authoritativeRebuild) {
+      const removed = await prisma.competitionTeam.deleteMany({ where: { competitionId } });
+      staleMembershipsRemoved += removed.count;
+    }
 
     const memberships = Array.from(membershipTeamIds).map((teamId) => ({ competitionId, teamId }));
     if (memberships.length > 0) {
@@ -144,9 +147,13 @@ export async function syncTheSportsDbCompetitionTeamCatalog() {
     diagnostics.push({
       competitionId,
       competitionName: catalog.competitionName,
+      season: catalog.season,
       returnedTeams: catalog.teams.length,
       expectedTeamCount: catalog.expectedTeamCount,
-      complete: catalog.complete,
+      complete: catalog.expectedTeamCount !== undefined
+        ? membershipTeamIds.size >= catalog.expectedTeamCount
+        : false,
+      authoritativeRebuild,
       sources: catalog.sources,
       matchObservedTeams: matchTeamIds.size,
     });
