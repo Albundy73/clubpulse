@@ -32,10 +32,24 @@ export default function CatalogRefreshControl({ dark = false }: { dark?: boolean
         method: "POST",
         cache: "no-store",
       });
-      const payload = await response.json() as RefreshPayload;
+      const body = await response.text();
+      let payload: RefreshPayload = {};
+
+      if (body.trim()) {
+        try {
+          payload = JSON.parse(body) as RefreshPayload;
+        } catch {
+          throw new Error(`Catalog refresh returned an invalid response (${response.status})`);
+        }
+      }
 
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? `Catalog refresh failed (${response.status})`);
+        throw new Error(
+          payload.error ??
+            (body.trim()
+              ? `Catalog refresh failed (${response.status})`
+              : `Catalog refresh returned an empty response (${response.status})`),
+        );
       }
 
       const diagnostics = payload.competitionTeamCatalogDiagnostics ?? [];
