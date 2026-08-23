@@ -48,16 +48,28 @@ function decodeHtml(value: string) {
 function absoluteArtworkUrl(value?: string | null) {
   if (!value) return undefined;
   const decoded = decodeHtml(value);
-  if (decoded.startsWith("//")) return `https:${decoded}`;
-  if (decoded.startsWith("/")) return `${SITE_BASE_URL}${decoded}`;
-  return decoded.startsWith("http") ? decoded : undefined;
+  const absolute = decoded.startsWith("//") ? `https:${decoded}` : decoded.startsWith("/") ? `${SITE_BASE_URL}${decoded}` : decoded.startsWith("http") ? decoded : undefined;
+  return absolute?.replace(/\/tiny\/?$/, "");
+}
+
+function artworkMatches(html: string, kind: "team" | "league") {
+  const folder = kind === "team" ? "team" : "league";
+  const pattern = new RegExp(`(?:src|data-src)=["']([^"']*\\/images\\/media\\/${folder}\\/(?:badge|logo)\\/[^"']+)["']`, "gi");
+  return Array.from(html.matchAll(pattern)).map((match) => ({ index: match.index ?? 0, url: absoluteArtworkUrl(match[1]) })).filter((item): item is { index: number; url: string } => Boolean(item.url));
 }
 
 function artworkFromHtml(html: string, kind: "team" | "league") {
-  const pattern = kind === "team"
-    ? /(?:src|data-src)=["']([^"']*\/images\/media\/team\/(?:badge|logo)\/[^"']+)["']/i
-    : /(?:src|data-src)=["']([^"']*\/images\/media\/league\/(?:badge|logo)\/[^"']+)["']/i;
-  return absoluteArtworkUrl(html.match(pattern)?.[1]);
+  return artworkMatches(html, kind)[0]?.url;
+}
+
+function nearestTeamArtwork(html: string, linkIndex: number) {
+  let best: { distance: number; url: string } | undefined;
+  for (const artwork of artworkMatches(html, "team")) {
+    const distance = Math.abs(artwork.index - linkIndex);
+    if (distance > 1200) continue;
+    if (!best || distance < best.distance) best = { distance, url: artwork.url };
+  }
+  return best?.url;
 }
 
 async function fetchHtml(url: string) {
@@ -87,15 +99,15 @@ function teamNameFromAnchor(anchorBody: string, slug: string) {
 
 function extractCanonicalTeamLinks(html: string) {
   const teamById = new Map<string, SportsDbTeam>();
-  const add = (idTeam: string, slug: string, body: string) => {
+  const add = (idTeam: string, slug: string, body: string, linkIndex: number) => {
     const strTeam = teamNameFromAnchor(body, slug);
-    const strBadge = artworkFromHtml(body, "team");
+    const strBadge = artworkFromHtml(body, "team") ?? nearestTeamArtwork(html, linkIndex);
     if (idTeam && strTeam) teamById.set(idTeam, { idTeam, strTeam, strSport: "Soccer", strBadge });
   };
   const filterPattern = /<a\b[^>]*href=["'][^"']*(?:&amp;|&)t=(\d+)-([^"'&<>\s]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(filterPattern)) add(match[1], match[2] ?? "", match[3] ?? "");
+  for (const match of html.matchAll(filterPattern)) add(match[1], match[2] ?? "", match[3] ?? "", match.index ?? 0);
   const teamPagePattern = /<a\b[^>]*href=["'][^"']*\/team\/(\d+)-([^"'/?#<>\s]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(teamPagePattern)) add(match[1], match[2] ?? "", match[3] ?? "");
+  for (const match of html.matchAll(teamPagePattern)) add(match[1], match[2] ?? "", match[3] ?? "", match.index ?? 0);
   return teamById;
 }
 
@@ -121,6 +133,12 @@ async function resolveTournamentTeamsFromEvents(html: string) {
 }
 function addTeam(teamById: Map<string, SportsDbTeam>, team: SportsDbTeam | undefined) { if (!team?.idTeam || !team.strTeam) return; const existing = teamById.get(team.idTeam); teamById.set(team.idTeam, existing ? { ...team, ...existing, strBadge: existing.strBadge ?? team.strBadge } : team); }
 
+async function fetchCompetitionBadge(competition: (typeof SUPPORTED_FOOTBALL_COMPETITIONS)[number]) {
+  const profileUrl = `${SITE_BASE_URL}/league/${competition.externalId}-${slugify(competition.name)}`;
+  const html = await fetchHtml(profileUrl);
+  return html ? artworkFromHtml(html, "league") : undefined;
+}
+
 async function fetchCompetitionTeams(competition: (typeof SUPPORTED_FOOTBALL_COMPETITIONS)[number], providerSeason?: string): Promise<CompetitionTeamCatalog> {
   const teamById = new Map<string, SportsDbTeam>(); const sources: string[] = []; const expectedTeamCount = "expectedTeamCount" in competition ? competition.expectedTeamCount : undefined; const isTournament = "tournament" in competition && competition.tournament === true; const inferredSeason = currentFootballSeason(); const seasonCandidates = Array.from(new Set([inferredSeason, providerSeason].filter(Boolean))) as string[]; let selectedSeason: string | undefined; let competitionBadgeUrl: string | undefined;
   for (const season of seasonCandidates) {
@@ -131,6 +149,8 @@ async function fetchCompetitionTeams(competition: (typeof SUPPORTED_FOOTBALL_COM
     if (directTeams.size > 0) sources.push(`season-page:${season}`); if (directTeams.size > 0 || teamById.size > 0) selectedSeason = season;
     if (!isTournament && (!expectedTeamCount || teamById.size >= expectedTeamCount)) break; if (isTournament && teamById.size > 0) break;
   }
+  competitionBadgeUrl ??= await fetchCompetitionBadge(competition);
+  if (competitionBadgeUrl) sources.push("league-profile-artwork");
   const teams = Array.from(teamById.values()).sort((a, b) => a.strTeam.localeCompare(b.strTeam));
   return { competitionExternalId: competition.externalId, competitionName: competition.name, competitionBadgeUrl, season: selectedSeason ?? providerSeason ?? inferredSeason, teams, expectedTeamCount, complete: expectedTeamCount ? teams.length >= expectedTeamCount : teams.length > 0, sources };
 }
