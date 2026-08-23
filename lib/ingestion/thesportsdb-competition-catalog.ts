@@ -34,7 +34,7 @@ export async function syncTheSportsDbCompetitionCatalog() {
         sportId: FOOTBALL_SPORT_ID,
         countryId,
         name: competition.name,
-        season: null,
+        season: competition.season ?? null,
         sourceProvider: PROVIDER,
         sourceExternalId: competition.externalId,
       },
@@ -42,6 +42,7 @@ export async function syncTheSportsDbCompetitionCatalog() {
         sportId: FOOTBALL_SPORT_ID,
         countryId,
         name: competition.name,
+        season: competition.season ?? existing?.season ?? null,
         sourceProvider: PROVIDER,
         sourceExternalId: competition.externalId,
       },
@@ -49,9 +50,9 @@ export async function syncTheSportsDbCompetitionCatalog() {
     competitionsUpserted += 1;
   }
 
-  // Every ingested fixture is authoritative evidence that both teams
-  // participate in its competition. This also keeps membership current when
-  // the provider introduces a competition that discovery did not return.
+  // Every ingested fixture is trusted evidence that both teams participate in
+  // its competition. This complements the seasonal catalog when provider list
+  // endpoints are capped on the free tier.
   const matches = await prisma.match.findMany({
     select: { competitionId: true, homeTeamId: true, awayTeamId: true },
   });
