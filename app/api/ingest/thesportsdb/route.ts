@@ -28,6 +28,7 @@ async function run(request: NextRequest) {
     const result = await ingestTheSportsDbFootball();
     return NextResponse.json({ ok: true, mode: "matches", ...result });
   } catch (error) {
+    console.error("TheSportsDB match ingestion failed", error);
     return NextResponse.json(
       {
         ok: false,
