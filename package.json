@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma migrate deploy && next build",
+    "build": "sh -c 'attempt=1; while ! prisma migrate deploy; do if [ $attempt -ge 5 ]; then echo \"Prisma migration failed after $attempt attempts\"; exit 1; fi; wait_seconds=$((attempt * 5)); echo \"Prisma migration attempt $attempt failed; retrying in ${wait_seconds}s...\"; sleep $wait_seconds; attempt=$((attempt + 1)); done; next build'",
     "start": "next start",
     "lint": "eslint",
     "db:migrate:deploy": "prisma migrate deploy",
