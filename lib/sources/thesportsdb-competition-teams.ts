@@ -18,6 +18,7 @@ type SportsDbTeam = {
   strCountry?: string | null;
   strWebsite?: string | null;
   strBadge?: string | null;
+  pageSlug?: string;
 };
 
 export type CompetitionTeamCatalog = {
@@ -49,7 +50,7 @@ function absoluteArtworkUrl(value?: string | null) {
   if (!value) return undefined;
   const decoded = decodeHtml(value);
   const absolute = decoded.startsWith("//") ? `https:${decoded}` : decoded.startsWith("/") ? `${SITE_BASE_URL}${decoded}` : decoded.startsWith("http") ? decoded : undefined;
-  return absolute?.replace(/\/tiny\/?$/, "");
+  return absolute?.replace(/\/(?:tiny|small|medium|large|original)\/?$/i, "");
 }
 
 function artworkMatches(html: string, kind: "team" | "league") {
@@ -102,7 +103,7 @@ function extractCanonicalTeamLinks(html: string) {
   const add = (idTeam: string, slug: string, body: string, linkIndex: number) => {
     const strTeam = teamNameFromAnchor(body, slug);
     const strBadge = artworkFromHtml(body, "team") ?? nearestTeamArtwork(html, linkIndex);
-    if (idTeam && strTeam) teamById.set(idTeam, { idTeam, strTeam, strSport: "Soccer", strBadge });
+    if (idTeam && strTeam) teamById.set(idTeam, { idTeam, strTeam, strSport: "Soccer", strBadge, pageSlug: slug });
   };
   const filterPattern = /<a\b[^>]*href=["'][^"']*(?:&amp;|&)t=(\d+)-([^"'&<>\s]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
   for (const match of html.matchAll(filterPattern)) add(match[1], match[2] ?? "", match[3] ?? "", match.index ?? 0);
@@ -122,41 +123,136 @@ function extractEventLinks(html: string): EventLink[] {
   }
   return Array.from(byUrl.values());
 }
-function chooseCoveringEvents(events: EventLink[]) { const selected: EventLink[] = []; const covered = new Set<string>(); for (const event of events) { if (covered.has(event.homeSlug) && covered.has(event.awaySlug)) continue; selected.push(event); covered.add(event.homeSlug); covered.add(event.awaySlug); } return selected; }
+
+function chooseCoveringEvents(events: EventLink[]) {
+  const selected: EventLink[] = [];
+  const covered = new Set<string>();
+  for (const event of events) {
+    if (covered.has(event.homeSlug) && covered.has(event.awaySlug)) continue;
+    selected.push(event);
+    covered.add(event.homeSlug);
+    covered.add(event.awaySlug);
+  }
+  return selected;
+}
+
 async function resolveTournamentTeamsFromEvents(html: string) {
-  const eventLinks = chooseCoveringEvents(extractEventLinks(html)); const teamById = new Map<string, SportsDbTeam>(); const batchSize = 6;
+  const eventLinks = chooseCoveringEvents(extractEventLinks(html));
+  const teamById = new Map<string, SportsDbTeam>();
+  const batchSize = 6;
   for (let offset = 0; offset < eventLinks.length; offset += batchSize) {
     const pages = await Promise.all(eventLinks.slice(offset, offset + batchSize).map((event) => fetchHtml(event.url)));
-    for (const page of pages) { if (!page) continue; for (const [id, team] of extractCanonicalTeamLinks(page)) teamById.set(id, team); }
+    for (const page of pages) {
+      if (!page) continue;
+      for (const [id, team] of extractCanonicalTeamLinks(page)) teamById.set(id, team);
+    }
   }
   return teamById;
 }
-function addTeam(teamById: Map<string, SportsDbTeam>, team: SportsDbTeam | undefined) { if (!team?.idTeam || !team.strTeam) return; const existing = teamById.get(team.idTeam); teamById.set(team.idTeam, existing ? { ...team, ...existing, strBadge: existing.strBadge ?? team.strBadge } : team); }
+
+function addTeam(teamById: Map<string, SportsDbTeam>, team: SportsDbTeam | undefined) {
+  if (!team?.idTeam || !team.strTeam) return;
+  const existing = teamById.get(team.idTeam);
+  teamById.set(team.idTeam, existing ? {
+    ...team,
+    ...existing,
+    strBadge: existing.strBadge ?? team.strBadge,
+    pageSlug: existing.pageSlug ?? team.pageSlug,
+  } : team);
+}
+
+async function enrichMissingTeamArtwork(teamById: Map<string, SportsDbTeam>) {
+  const missing = Array.from(teamById.values()).filter((team) => !team.strBadge);
+  let enriched = 0;
+  const batchSize = 8;
+
+  for (let offset = 0; offset < missing.length; offset += batchSize) {
+    const batch = missing.slice(offset, offset + batchSize);
+    const pages = await Promise.all(batch.map((team) => {
+      const slug = team.pageSlug || slugify(team.strTeam);
+      return fetchHtml(`${SITE_BASE_URL}/team/${team.idTeam}-${slug}`);
+    }));
+
+    pages.forEach((page, index) => {
+      if (!page) return;
+      const team = batch[index];
+      const badge = artworkFromHtml(page, "team");
+      if (!badge) return;
+      teamById.set(team.idTeam, { ...team, strBadge: badge });
+      enriched += 1;
+    });
+  }
+
+  return enriched;
+}
 
 async function fetchCompetitionBadge(competition: (typeof SUPPORTED_FOOTBALL_COMPETITIONS)[number]) {
-  const profileUrl = `${SITE_BASE_URL}/league/${competition.externalId}-${slugify(competition.name)}`;
-  const html = await fetchHtml(profileUrl);
-  return html ? artworkFromHtml(html, "league") : undefined;
+  const candidates = [
+    `${SITE_BASE_URL}/league/${competition.externalId}`,
+    `${SITE_BASE_URL}/league/${competition.externalId}-${slugify(competition.name)}`,
+  ];
+  for (const profileUrl of candidates) {
+    const html = await fetchHtml(profileUrl);
+    const badge = html ? artworkFromHtml(html, "league") : undefined;
+    if (badge) return badge;
+  }
+  return undefined;
 }
 
 async function fetchCompetitionTeams(competition: (typeof SUPPORTED_FOOTBALL_COMPETITIONS)[number], providerSeason?: string): Promise<CompetitionTeamCatalog> {
-  const teamById = new Map<string, SportsDbTeam>(); const sources: string[] = []; const expectedTeamCount = "expectedTeamCount" in competition ? competition.expectedTeamCount : undefined; const isTournament = "tournament" in competition && competition.tournament === true; const inferredSeason = currentFootballSeason(); const seasonCandidates = Array.from(new Set([inferredSeason, providerSeason].filter(Boolean))) as string[]; let selectedSeason: string | undefined; let competitionBadgeUrl: string | undefined;
+  const teamById = new Map<string, SportsDbTeam>();
+  const sources: string[] = [];
+  const expectedTeamCount = "expectedTeamCount" in competition ? competition.expectedTeamCount : undefined;
+  const isTournament = "tournament" in competition && competition.tournament === true;
+  const inferredSeason = currentFootballSeason();
+  const seasonCandidates = Array.from(new Set([inferredSeason, providerSeason].filter(Boolean))) as string[];
+  let selectedSeason: string | undefined;
+  let competitionBadgeUrl: string | undefined;
+
   for (const season of seasonCandidates) {
-    const url = `${SITE_BASE_URL}/season/${competition.externalId}-${slugify(competition.name)}/${encodeURIComponent(season)}`; const html = await fetchHtml(url); if (!html) continue;
+    const url = `${SITE_BASE_URL}/season/${competition.externalId}-${slugify(competition.name)}/${encodeURIComponent(season)}`;
+    const html = await fetchHtml(url);
+    if (!html) continue;
+
     competitionBadgeUrl ??= artworkFromHtml(html, "league");
-    const directTeams = extractCanonicalTeamLinks(html); for (const team of directTeams.values()) addTeam(teamById, team);
-    if (isTournament) { const eventTeams = await resolveTournamentTeamsFromEvents(html); for (const team of eventTeams.values()) addTeam(teamById, team); if (eventTeams.size > 0) sources.push(`public-events:${season}`); }
-    if (directTeams.size > 0) sources.push(`season-page:${season}`); if (directTeams.size > 0 || teamById.size > 0) selectedSeason = season;
-    if (!isTournament && (!expectedTeamCount || teamById.size >= expectedTeamCount)) break; if (isTournament && teamById.size > 0) break;
+    const directTeams = extractCanonicalTeamLinks(html);
+    for (const team of directTeams.values()) addTeam(teamById, team);
+
+    if (isTournament) {
+      const eventTeams = await resolveTournamentTeamsFromEvents(html);
+      for (const team of eventTeams.values()) addTeam(teamById, team);
+      if (eventTeams.size > 0) sources.push(`public-events:${season}`);
+    }
+
+    if (directTeams.size > 0) sources.push(`season-page:${season}`);
+    if (directTeams.size > 0 || teamById.size > 0) selectedSeason = season;
+    if (!isTournament && (!expectedTeamCount || teamById.size >= expectedTeamCount)) break;
+    if (isTournament && teamById.size > 0) break;
   }
+
   competitionBadgeUrl ??= await fetchCompetitionBadge(competition);
   if (competitionBadgeUrl) sources.push("league-profile-artwork");
+
+  const teamArtworkEnriched = await enrichMissingTeamArtwork(teamById);
+  if (teamArtworkEnriched > 0) sources.push(`team-profile-artwork:${teamArtworkEnriched}`);
+
   const teams = Array.from(teamById.values()).sort((a, b) => a.strTeam.localeCompare(b.strTeam));
-  return { competitionExternalId: competition.externalId, competitionName: competition.name, competitionBadgeUrl, season: selectedSeason ?? providerSeason ?? inferredSeason, teams, expectedTeamCount, complete: expectedTeamCount ? teams.length >= expectedTeamCount : teams.length > 0, sources };
+  return {
+    competitionExternalId: competition.externalId,
+    competitionName: competition.name,
+    competitionBadgeUrl,
+    season: selectedSeason ?? providerSeason ?? inferredSeason,
+    teams,
+    expectedTeamCount,
+    complete: expectedTeamCount ? teams.length >= expectedTeamCount : teams.length > 0,
+    sources,
+  };
 }
 
 export async function fetchTheSportsDbSupportedCompetitionTeams(seasonByExternalId: ReadonlyMap<string, string | undefined>) {
   const catalogs: CompetitionTeamCatalog[] = [];
-  for (const competition of SUPPORTED_FOOTBALL_COMPETITIONS) catalogs.push(await fetchCompetitionTeams(competition, seasonByExternalId.get(competition.externalId)));
+  for (const competition of SUPPORTED_FOOTBALL_COMPETITIONS) {
+    catalogs.push(await fetchCompetitionTeams(competition, seasonByExternalId.get(competition.externalId)));
+  }
   return catalogs;
 }
