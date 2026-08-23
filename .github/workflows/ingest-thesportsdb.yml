@@ -21,6 +21,7 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Push runs target the branch Preview so every ingestion change is verified there.
           if [ "${{ github.event_name }}" = "push" ]; then
             INGEST_URL="https://clubpulse-git-feature-competition-first-structure-apcd.vercel.app/api/ingest/thesportsdb"
           else
