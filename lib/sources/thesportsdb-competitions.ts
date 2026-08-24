@@ -17,7 +17,7 @@ const SUPPORTED_FOOTBALL_COMPETITIONS = [
   { externalId: "4344", name: "Primeira Liga", country: "Portugal" },
   { externalId: "4510", name: "Taca de Portugal", country: "Portugal" },
   { externalId: "4334", name: "Ligue 1", country: "France" },
-  { externalId: "4401", name: "Ligue 2", country: "France" },
+  { externalId: "4484", name: "Coupe de France", country: "France" },
   { externalId: "4480", name: "UEFA Champions League" },
   { externalId: "4481", name: "UEFA Europa League" },
 ] as const;
