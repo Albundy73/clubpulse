@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import CatalogRefreshControl from "@/components/catalog-refresh-control";
+import PreferenceTeamSummary from "@/components/preference-team-summary";
 import TeamPreferenceAccordion from "@/components/team-preference-accordion";
 import type { CompetitionPreferences, Match, Team } from "@/lib/types";
 
@@ -148,8 +149,6 @@ export default function ClubPulseDashboard() {
       if (!lastRefresh || Date.now() - lastRefresh >= PREVIEW_REFRESH_INTERVAL_MS) {
         try {
           const refreshResponse = await fetch("/api/preview/ingest", { signal: controller.signal, cache: "no-store" });
-          // The endpoint is intentionally 404 outside Preview. Record the check in
-          // either case so production browsers do not repeatedly probe it.
           if (refreshResponse.ok || refreshResponse.status === 404) {
             window.localStorage.setItem(PREVIEW_REFRESH_KEY, String(Date.now()));
           }
@@ -267,9 +266,7 @@ function PreferenceForm({ preferences, competitions, catalogStatus, onToggleComp
 
 function Onboarding({ preferences, competitions, selectedCompetitions, catalogStatus, onToggleCompetition, onToggleTeam, onFollowAllTeams, onComplete }: { preferences: CompetitionPreferences; competitions: CompetitionOption[]; selectedCompetitions: CompetitionOption[]; catalogStatus: CatalogStatus; onToggleCompetition: (id: string) => void; onToggleTeam: (competitionId: string, teamId: string) => void; onFollowAllTeams: (competitionId: string) => void; onComplete: () => void }) {
   const ready = preferences.competitionIds.length > 0;
-  const explicitCount = preferences.competitionIds.reduce((count, id) => count + (preferences.teamIdsByCompetition[id]?.length ?? 0), 0);
-  const allCount = preferences.competitionIds.filter((id) => (preferences.teamIdsByCompetition[id]?.length ?? 0) === 0).length;
-  return <section className="overflow-hidden rounded-3xl bg-slate-900 text-white shadow-lg"><div className="border-b border-slate-800 px-6 py-6 sm:px-8"><h1 className="max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">What do you want to follow?</h1></div><div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.4fr_0.8fr]"><div><PreferenceForm preferences={preferences} competitions={competitions} catalogStatus={catalogStatus} onToggleCompetition={onToggleCompetition} onToggleTeam={onToggleTeam} onFollowAllTeams={onFollowAllTeams} dark /></div><aside className="rounded-2xl border border-slate-700 bg-slate-800/70 p-5"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Your dashboard</p><div className="mt-5 space-y-4"><div><div className="text-xs text-slate-400">Favorites</div><div className="mt-2 flex flex-wrap gap-2">{selectedCompetitions.length ? selectedCompetitions.map((competition) => <span key={competition.id} className="rounded-full bg-slate-700 px-2.5 py-1 text-sm font-semibold">★ {competition.name}</span>) : <span className="text-sm text-slate-500">Star at least one competition</span>}</div></div><div><div className="text-xs text-slate-400">Teams</div><div className="mt-2 text-sm font-semibold">{allCount > 0 ? `${allCount} competition${allCount === 1 ? "" : "s"}: all teams` : ""}{allCount > 0 && explicitCount > 0 ? " · " : ""}{explicitCount > 0 ? `${explicitCount} specifically selected` : ""}</div></div></div></aside></div><div className="flex justify-end border-t border-slate-800 bg-slate-950/40 px-6 py-5 sm:px-8"><button onClick={onComplete} disabled={!ready} className="rounded-xl bg-white px-6 py-3 font-bold text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">Apply</button></div></section>;
+  return <section className="overflow-hidden rounded-3xl bg-slate-900 text-white shadow-lg"><div className="border-b border-slate-800 px-6 py-6 sm:px-8"><h1 className="max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">What do you want to follow?</h1></div><div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.4fr_0.8fr]"><div><PreferenceForm preferences={preferences} competitions={competitions} catalogStatus={catalogStatus} onToggleCompetition={onToggleCompetition} onToggleTeam={onToggleTeam} onFollowAllTeams={onFollowAllTeams} dark /></div><aside className="rounded-2xl border border-slate-700 bg-slate-800/70 p-5"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Your dashboard</p><div className="mt-5 space-y-4"><div><div className="text-xs text-slate-400">Favorites</div><div className="mt-2 flex flex-wrap gap-2">{selectedCompetitions.length ? selectedCompetitions.map((competition) => <span key={competition.id} className="rounded-full bg-slate-700 px-2.5 py-1 text-sm font-semibold">★ {competition.name}</span>) : <span className="text-sm text-slate-500">Star at least one competition</span>}</div></div><div><div className="text-xs text-slate-400">Teams</div><div className="mt-2"><PreferenceTeamSummary preferences={preferences} competitions={selectedCompetitions} /></div></div></div></aside></div><div className="flex justify-end border-t border-slate-800 bg-slate-950/40 px-6 py-5 sm:px-8"><button onClick={onComplete} disabled={!ready} className="rounded-xl bg-white px-6 py-3 font-bold text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">Apply</button></div></section>;
 }
 
 function MatchWindowSelector({ active, onChange }: { active: MatchWindow; onChange: (window: MatchWindow) => void }) {
