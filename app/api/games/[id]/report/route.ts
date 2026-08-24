@@ -7,138 +7,63 @@ const API_BASE = "https://www.thesportsdb.com/api/v1/json/123";
 type JsonRecord = Record<string, unknown>;
 type ReportPlayer = { teamId?: string; teamName?: string; player: string; number?: string; position?: string; role: string };
 type ReportGoal = { teamId?: string; teamName?: string; player: string; minute: string };
+type ReportStat = { label: string; home: string; away: string };
 
-async function fetchRows(path: string, keys: string[]) {
-  try {
-    const response = await fetch(`${API_BASE}/${path}`, { cache: "no-store" });
-    if (!response.ok) return [] as JsonRecord[];
-    const payload = await response.json() as JsonRecord;
-    for (const key of keys) {
-      const value = payload[key];
-      if (Array.isArray(value)) return value.filter((row): row is JsonRecord => Boolean(row) && typeof row === "object");
+async function fetchRows(path: string, keys: string[]) { try { const response = await fetch(`${API_BASE}/${path}`, { cache: "no-store" }); if (!response.ok) return [] as JsonRecord[]; const payload = await response.json() as JsonRecord; for (const key of keys) { const value = payload[key]; if (Array.isArray(value)) return value.filter((row): row is JsonRecord => Boolean(row) && typeof row === "object"); } } catch {} return [] as JsonRecord[]; }
+async function fetchEventHtml(externalId: string) { try { const response = await fetch(`https://www.thesportsdb.com/event/${externalId}`, { cache: "no-store", redirect: "follow" }); return response.ok ? await response.text() : ""; } catch { return ""; } }
+async function fetchText(url: string) { try { const response = await fetch(url, { cache: "no-store", redirect: "follow", headers: { "user-agent": "ClubPulse/1.0" } }); return response.ok ? await response.text() : ""; } catch { return ""; } }
+function text(row: JsonRecord, ...keys: string[]) { for (const key of keys) { const value = row[key]; if (typeof value === "string" && value.trim()) return value.trim(); if (typeof value === "number") return String(value); } return undefined; }
+function decodeHtml(value: string) { return value.replace(/<[^>]+>/g, " ").replace(/&#(\d+);/g, (_m, code) => String.fromCharCode(Number(code))).replace(/&#x([0-9a-f]+);/gi, (_m, code) => String.fromCharCode(Number.parseInt(code, 16))).replace(/&amp;/gi, "&").replace(/&apos;|&#39;/gi, "'").replace(/&quot;/gi, '"').replace(/&nbsp;/gi, " ").replace(/\s+/g, " ").trim(); }
+function extractSection(html: string, startMarker: string, endMarker: string) { const lower = html.toLowerCase(); const start = lower.indexOf(startMarker.toLowerCase()); const end = start >= 0 ? lower.indexOf(endMarker.toLowerCase(), start + startMarker.length) : -1; return start >= 0 && end >= 0 ? html.slice(start, end) : ""; }
+function extractPublicLineup(html: string, startMarker: string, endMarker: string, teamId: string, teamName: string) { const section = extractSection(html, startMarker, endMarker); if (!section) return [] as ReportPlayer[]; const players: ReportPlayer[] = []; const anchorPattern = /<a\b[^>]*href=["'][^"']*\/player\/[^"']+["'][^>]*>([\s\S]*?)<\/a>/gi; let match: RegExpExecArray | null; while ((match = anchorPattern.exec(section))) { const player = decodeHtml(match[1]); if (!player) continue; const prefix = section.slice(Math.max(0, match.index - 90), match.index); const role = /substitute/i.test(prefix) ? "Yes" : "No"; if (!players.some((item) => item.player.toLocaleLowerCase() === player.toLocaleLowerCase())) players.push({ teamId, teamName, player, role }); } return players; }
+function normalizeFormation(value?: string) { return value?.match(/\b\d(?:-\d){2,4}\b/)?.[0]; }
+function formationFromHtml(html: string, startMarker: string, endMarker: string) { return normalizeFormation(decodeHtml(extractSection(html, startMarker, endMarker))); }
+function slug(value: string) { return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
+
+async function fallbackReport(match: { date: Date; homeTeamId: string; awayTeamId: string; homeTeam: { name: string }; awayTeam: { name: string } }) {
+  const date = match.date.toISOString().slice(0, 10);
+  const candidates = [
+    `https://ontourfootball.com/fixtures/${slug(match.homeTeam.name)}-vs-${slug(match.awayTeam.name)}-${date}`,
+    `https://www.footballfirst.com/football-live-centre/match-detail/${slug(match.homeTeam.name)}-vs-${slug(match.awayTeam.name)}/lineup`,
+  ];
+  for (const url of candidates) {
+    const html = await fetchText(url); if (!html) continue; const plain = decodeHtml(html);
+    const stats: ReportStat[] = [];
+    for (const label of ["Possession", "Total Shots", "On Target", "Off Target", "Blocked", "Corners", "Fouls", "Offsides", "Passes", "Pass Accuracy", "Yellow Cards", "GK Saves", "xG"]) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const before = plain.match(new RegExp(`([0-9]+(?:\\.[0-9]+)?%?)\\s+${escaped}\\s+([0-9]+(?:\\.[0-9]+)?%?)`, "i"));
+      if (before) stats.push({ label, home: before[1], away: before[2] });
     }
-  } catch {}
-  return [] as JsonRecord[];
-}
-
-async function fetchEventHtml(externalId: string) {
-  try {
-    const response = await fetch(`https://www.thesportsdb.com/event/${externalId}`, { cache: "no-store", redirect: "follow" });
-    return response.ok ? await response.text() : "";
-  } catch { return ""; }
-}
-
-function text(row: JsonRecord, ...keys: string[]) {
-  for (const key of keys) {
-    const value = row[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-    if (typeof value === "number") return String(value);
+    const formations: Record<string, string> = {};
+    const homeFormation = plain.match(new RegExp(`${match.homeTeam.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^0-9]{0,40}(\\d(?:-\\d){2,4})`, "i"))?.[1];
+    const awayFormation = plain.match(new RegExp(`${match.awayTeam.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^0-9]{0,40}(\\d(?:-\\d){2,4})`, "i"))?.[1];
+    if (homeFormation) formations[match.homeTeamId] = homeFormation; if (awayFormation) formations[match.awayTeamId] = awayFormation;
+    const lineups: ReportPlayer[] = [];
+    for (const [teamId, teamName, otherName] of [[match.homeTeamId, match.homeTeam.name, match.awayTeam.name], [match.awayTeamId, match.awayTeam.name, match.homeTeam.name]] as const) {
+      const start = plain.toLowerCase().indexOf(teamName.toLowerCase()); const next = start >= 0 ? plain.toLowerCase().indexOf(otherName.toLowerCase(), start + teamName.length) : -1; const section = start >= 0 ? plain.slice(start, next > start ? next : start + 2500) : "";
+      const playerPattern = /\b(\d{1,2})\s+([A-ZÀ-ÖØ-Ý][\p{L}'’.\-]+(?:\s+[A-ZÀ-ÖØ-Ý][\p{L}'’.\-]+){0,4})\s+([GDMF])\b/gu; let found: RegExpExecArray | null;
+      while ((found = playerPattern.exec(section)) && lineups.filter((p) => p.teamId === teamId && p.role === "No").length < 11) lineups.push({ teamId, teamName, number: found[1], player: found[2], position: ({ G: "Goalkeeper", D: "Defender", M: "Midfielder", F: "Forward" } as Record<string,string>)[found[3]], role: "No" });
+    }
+    if (stats.length || lineups.length || Object.keys(formations).length) return { statistics: stats, lineups, formations, source: url };
   }
-  return undefined;
+  return { statistics: [] as ReportStat[], lineups: [] as ReportPlayer[], formations: {} as Record<string,string>, source: undefined };
 }
 
-function decodeHtml(value: string) {
-  return value.replace(/<[^>]+>/g, "").replace(/&#(\d+);/g, (_m, code) => String.fromCharCode(Number(code))).replace(/&#x([0-9a-f]+);/gi, (_m, code) => String.fromCharCode(Number.parseInt(code, 16))).replace(/&amp;/gi, "&").replace(/&apos;|&#39;/gi, "'").replace(/&quot;/gi, '"').replace(/&nbsp;/gi, " ").trim();
-}
-
-function extractSection(html: string, startMarker: string, endMarker: string) {
-  const lower = html.toLowerCase();
-  const start = lower.indexOf(startMarker.toLowerCase());
-  const end = start >= 0 ? lower.indexOf(endMarker.toLowerCase(), start + startMarker.length) : -1;
-  return start >= 0 && end >= 0 ? html.slice(start, end) : "";
-}
-
-function extractPublicLineup(html: string, startMarker: string, endMarker: string, teamId: string, teamName: string) {
-  const section = extractSection(html, startMarker, endMarker);
-  if (!section) return [] as ReportPlayer[];
-  const players: ReportPlayer[] = [];
-  const anchorPattern = /<a\b[^>]*href=["'][^"']*\/player\/[^"']+["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let match: RegExpExecArray | null;
-  while ((match = anchorPattern.exec(section))) {
-    const player = decodeHtml(match[1]);
-    if (!player) continue;
-    const prefix = section.slice(Math.max(0, match.index - 90), match.index);
-    const role = /substitute/i.test(prefix) ? "Yes" : "No";
-    if (!players.some((item) => item.player.toLocaleLowerCase() === player.toLocaleLowerCase())) players.push({ teamId, teamName, player, role });
-  }
-  return players;
-}
-
-function normalizeFormation(value?: string) {
-  if (!value) return undefined;
-  return value.match(/\b\d(?:-\d){2,4}\b/)?.[0];
-}
-
-function formationFromHtml(html: string, startMarker: string, endMarker: string) {
-  return normalizeFormation(decodeHtml(extractSection(html, startMarker, endMarker)));
-}
-
-function verifiedEventCorrection(externalId: string, match: { homeTeamId: string; awayTeamId: string; homeTeam: { name: string }; awayTeam: { name: string } }) {
-  if (externalId !== "2489465") return undefined;
-  const home = (player: string, number: string, position: string): ReportPlayer => ({ teamId: match.homeTeamId, teamName: match.homeTeam.name, player, number, position, role: "No" });
-  const away = (player: string, number: string, position: string): ReportPlayer => ({ teamId: match.awayTeamId, teamName: match.awayTeam.name, player, number, position, role: "No" });
-  return {
-    formations: { [match.homeTeamId]: "4-1-4-1", [match.awayTeamId]: "4-3-3" },
-    goals: [
-      { teamId: match.homeTeamId, teamName: match.homeTeam.name, player: "Sebastian Szymański", minute: "9" },
-      { teamId: match.homeTeamId, teamName: match.homeTeam.name, player: "Esteban Lepaul", minute: "38" },
-      { teamId: match.awayTeamId, teamName: match.awayTeam.name, player: "Ferran Torres", minute: "71" },
-      { teamId: match.awayTeamId, teamName: match.awayTeam.name, player: "Ferran Torres", minute: "82" },
-    ] satisfies ReportGoal[],
-    starters: [
-      home("Samba", "30", "Goalkeeper"), home("Frankowski", "95", "Right-Back"), home("Boudlal", "48", "Centre-Back"), home("Cresswell", "4", "Centre-Back"), home("Nagida", "18", "Left-Back"), home("Rongier", "21", "Defensive Midfield"), home("Al-Taamari", "11", "Right Midfield"), home("Szymański", "17", "Central Midfield"), home("Thomasson", "28", "Central Midfield"), home("Soumaré", "90", "Left Midfield"), home("Lepaul", "9", "Centre-Forward"),
-      away("Safonov", "39", "Goalkeeper"), away("Hakimi", "2", "Right-Back"), away("Marquinhos", "5", "Centre-Back"), away("Pacho", "51", "Centre-Back"), away("Hernandez", "21", "Left-Back"), away("Zaïre-Emery", "33", "Central Midfield"), away("Vitinha", "17", "Central Midfield"), away("Neves", "87", "Central Midfield"), away("Doué", "14", "Right Winger"), away("Dembélé", "10", "Centre-Forward"), away("Kvaratskhelia", "7", "Left Winger"),
-    ],
-  };
-}
+function verifiedEventCorrection(externalId: string, match: { homeTeamId: string; awayTeamId: string; homeTeam: { name: string }; awayTeam: { name: string } }) { if (externalId !== "2489465") return undefined; const home = (player: string, number: string, position: string): ReportPlayer => ({ teamId: match.homeTeamId, teamName: match.homeTeam.name, player, number, position, role: "No" }); const away = (player: string, number: string, position: string): ReportPlayer => ({ teamId: match.awayTeamId, teamName: match.awayTeam.name, player, number, position, role: "No" }); return { formations: { [match.homeTeamId]: "4-1-4-1", [match.awayTeamId]: "4-3-3" }, goals: [{ teamId: match.homeTeamId, teamName: match.homeTeam.name, player: "Sebastian Szymański", minute: "9" }, { teamId: match.homeTeamId, teamName: match.homeTeam.name, player: "Esteban Lepaul", minute: "38" }, { teamId: match.awayTeamId, teamName: match.awayTeam.name, player: "Ferran Torres", minute: "71" }, { teamId: match.awayTeamId, teamName: match.awayTeam.name, player: "Ferran Torres", minute: "82" }] satisfies ReportGoal[], starters: [home("Samba", "30", "Goalkeeper"), home("Frankowski", "95", "Right-Back"), home("Boudlal", "48", "Centre-Back"), home("Cresswell", "4", "Centre-Back"), home("Nagida", "18", "Left-Back"), home("Rongier", "21", "Defensive Midfield"), home("Al-Taamari", "11", "Right Midfield"), home("Szymański", "17", "Central Midfield"), home("Thomasson", "28", "Central Midfield"), home("Soumaré", "90", "Left Midfield"), home("Lepaul", "9", "Centre-Forward"), away("Safonov", "39", "Goalkeeper"), away("Hakimi", "2", "Right-Back"), away("Marquinhos", "5", "Centre-Back"), away("Pacho", "51", "Centre-Back"), away("Hernandez", "21", "Left-Back"), away("Zaïre-Emery", "33", "Central Midfield"), away("Vitinha", "17", "Central Midfield"), away("Neves", "87", "Central Midfield"), away("Doué", "14", "Right Winger"), away("Dembélé", "10", "Centre-Forward"), away("Kvaratskhelia", "7", "Left Winger")] }; }
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const { id } = await context.params;
-  const externalId = id.replace(/^thesportsdb-event-/, "");
-  if (!/^\d+$/.test(externalId)) return NextResponse.json({ error: "Unsupported game source." }, { status: 400 });
-
-  const [{ prisma }, eventRows, timelineRows, statRows, lineupRows, eventHtml] = await Promise.all([
-    import("@/lib/db"), fetchRows(`lookupevent.php?id=${externalId}`, ["events", "event"]), fetchRows(`lookuptimeline.php?id=${externalId}`, ["timeline", "eventtimeline"]), fetchRows(`lookupeventstats.php?id=${externalId}`, ["eventstats", "stats"]), fetchRows(`lookuplineup.php?id=${externalId}`, ["lineup", "eventlineup"]), fetchEventHtml(externalId),
-  ]);
-
+  const { id } = await context.params; const externalId = id.replace(/^thesportsdb-event-/, ""); if (!/^\d+$/.test(externalId)) return NextResponse.json({ error: "Unsupported game source." }, { status: 400 });
+  const [{ prisma }, eventRows, timelineRows, statRows, lineupRows, eventHtml] = await Promise.all([import("@/lib/db"), fetchRows(`lookupevent.php?id=${externalId}`, ["events", "event"]), fetchRows(`lookuptimeline.php?id=${externalId}`, ["timeline", "eventtimeline"]), fetchRows(`lookupeventstats.php?id=${externalId}`, ["eventstats", "stats"]), fetchRows(`lookuplineup.php?id=${externalId}`, ["lineup", "eventlineup"]), fetchEventHtml(externalId)]);
   const match = await prisma.match.findFirst({ where: { OR: [{ id }, { sourceProvider: "thesportsdb", sourceExternalId: externalId }] }, include: { homeTeam: true, awayTeam: true } });
-  const providerToLocalTeamId = new Map<string, string>();
-  if (match?.homeTeam.sourceExternalId) providerToLocalTeamId.set(match.homeTeam.sourceExternalId, match.homeTeamId);
-  if (match?.awayTeam.sourceExternalId) providerToLocalTeamId.set(match.awayTeam.sourceExternalId, match.awayTeamId);
-  const localTeamId = (providerId?: string) => providerId ? providerToLocalTeamId.get(providerId) ?? providerId : undefined;
-
+  if (!match) return NextResponse.json({ error: "Game not found." }, { status: 404 });
+  const providerToLocalTeamId = new Map<string,string>(); if (match.homeTeam.sourceExternalId) providerToLocalTeamId.set(match.homeTeam.sourceExternalId, match.homeTeamId); if (match.awayTeam.sourceExternalId) providerToLocalTeamId.set(match.awayTeam.sourceExternalId, match.awayTeamId); const localTeamId = (providerId?: string) => providerId ? providerToLocalTeamId.get(providerId) ?? providerId : undefined;
   const providerGoals: ReportGoal[] = timelineRows.filter((row) => (text(row, "strTimeline", "strType", "strEvent") ?? "").toLowerCase().includes("goal")).map((row) => ({ teamId: localTeamId(text(row, "idTeam")), teamName: text(row, "strTeam"), player: text(row, "strPlayer", "strPlayerName") ?? "Goal", minute: text(row, "intTime", "strTime", "strTimelineDetail") ?? "" }));
-  const statistics = statRows.map((row) => ({ label: text(row, "strStat", "strStatistic", "strType") ?? "Statistic", home: text(row, "intHome", "strHome", "strHomeValue", "intHomeValue") ?? "—", away: text(row, "intAway", "strAway", "strAwayValue", "intAwayValue") ?? "—" })).filter((row) => row.home !== "—" || row.away !== "—");
+  let statistics: ReportStat[] = statRows.map((row) => ({ label: text(row, "strStat", "strStatistic", "strType") ?? "Statistic", home: text(row, "intHome", "strHome", "strHomeValue", "intHomeValue") ?? "—", away: text(row, "intAway", "strAway", "strAwayValue", "intAwayValue") ?? "—" })).filter((row) => row.home !== "—" || row.away !== "—");
   const apiLineups: ReportPlayer[] = lineupRows.map((row) => ({ teamId: localTeamId(text(row, "idTeam")), teamName: text(row, "strTeam"), player: text(row, "strPlayer", "strPlayerName") ?? "Unknown player", number: text(row, "intSquadNumber", "strNumber"), position: text(row, "strPosition"), role: text(row, "strSubstitute", "strRole") ?? "" }));
-  const publicLineups = match ? [...extractPublicLineup(eventHtml, "Home Team Lineup", "Away Team Lineup", match.homeTeamId, match.homeTeam.name), ...extractPublicLineup(eventHtml, "Away Team Lineup", "Event Statistics", match.awayTeamId, match.awayTeam.name)] : [];
-  const apiByPlayer = new Map(apiLineups.map((player) => [player.player.toLocaleLowerCase(), player]));
-  const combined = [...publicLineups, ...apiLineups].map((player) => ({ ...player, ...(apiByPlayer.get(player.player.toLocaleLowerCase()) ?? {}), teamId: player.teamId, teamName: player.teamName }));
-
-  const correction = match ? verifiedEventCorrection(externalId, match) : undefined;
-  const goals = correction?.goals ?? providerGoals;
-  const correctedStarterNames = new Set(correction?.starters.map((player) => `${player.teamId}:${player.player.toLocaleLowerCase()}`) ?? []);
-  const lineups = Array.from(new Map([...(correction?.starters ?? []), ...combined.filter((player) => !correctedStarterNames.has(`${player.teamId}:${player.player.toLocaleLowerCase()}`))].map((player) => [`${player.teamId ?? player.teamName}:${player.player.toLocaleLowerCase()}`, player])).values());
-
-  const formations: Record<string, string> = {};
-  const event = eventRows[0];
-  if (match && event) {
-    const homeFormation = normalizeFormation(text(event, "strHomeFormation", "strFormationHome", "strHomeLineupFormation"));
-    const awayFormation = normalizeFormation(text(event, "strAwayFormation", "strFormationAway", "strAwayLineupFormation"));
-    if (homeFormation) formations[match.homeTeamId] = homeFormation;
-    if (awayFormation) formations[match.awayTeamId] = awayFormation;
-  }
-  for (const row of lineupRows) {
-    const teamId = localTeamId(text(row, "idTeam"));
-    const formation = normalizeFormation(text(row, "strFormation", "strTeamFormation", "strFormationName"));
-    if (teamId && formation && !formations[teamId]) formations[teamId] = formation;
-  }
-  if (match) {
-    formations[match.homeTeamId] ||= formationFromHtml(eventHtml, "Home Team Lineup", "Away Team Lineup") ?? "";
-    formations[match.awayTeamId] ||= formationFromHtml(eventHtml, "Away Team Lineup", "Event Statistics") ?? "";
-    if (!formations[match.homeTeamId]) delete formations[match.homeTeamId];
-    if (!formations[match.awayTeamId]) delete formations[match.awayTeamId];
-  }
-  if (correction) Object.assign(formations, correction.formations);
-
-  return NextResponse.json({ goals, statistics, lineups, formations, availability: { goals: goals.length > 0, statistics: statistics.length > 0, lineups: lineups.length > 0 }, lineupSource: correction ? "verified-correction+public-event-page+api" : publicLineups.length > apiLineups.length ? "public-event-page+api" : "api" });
+  const publicLineups = [...extractPublicLineup(eventHtml, "Home Team Lineup", "Away Team Lineup", match.homeTeamId, match.homeTeam.name), ...extractPublicLineup(eventHtml, "Away Team Lineup", "Event Statistics", match.awayTeamId, match.awayTeam.name)]; const apiByPlayer = new Map(apiLineups.map((player) => [player.player.toLocaleLowerCase(), player])); const combined = [...publicLineups, ...apiLineups].map((player) => ({ ...player, ...(apiByPlayer.get(player.player.toLocaleLowerCase()) ?? {}), teamId: player.teamId, teamName: player.teamName }));
+  const correction = verifiedEventCorrection(externalId, match); const goals = correction?.goals ?? providerGoals; const correctedStarterNames = new Set(correction?.starters.map((player) => `${player.teamId}:${player.player.toLocaleLowerCase()}`) ?? []); let lineups = Array.from(new Map([...(correction?.starters ?? []), ...combined.filter((player) => !correctedStarterNames.has(`${player.teamId}:${player.player.toLocaleLowerCase()}`))].map((player) => [`${player.teamId ?? player.teamName}:${player.player.toLocaleLowerCase()}`, player])).values());
+  const formations: Record<string,string> = {}; const event = eventRows[0]; if (event) { const hf = normalizeFormation(text(event, "strHomeFormation", "strFormationHome", "strHomeLineupFormation")); const af = normalizeFormation(text(event, "strAwayFormation", "strFormationAway", "strAwayLineupFormation")); if (hf) formations[match.homeTeamId] = hf; if (af) formations[match.awayTeamId] = af; } for (const row of lineupRows) { const teamId = localTeamId(text(row, "idTeam")); const formation = normalizeFormation(text(row, "strFormation", "strTeamFormation", "strFormationName")); if (teamId && formation && !formations[teamId]) formations[teamId] = formation; } formations[match.homeTeamId] ||= formationFromHtml(eventHtml, "Home Team Lineup", "Away Team Lineup") ?? ""; formations[match.awayTeamId] ||= formationFromHtml(eventHtml, "Away Team Lineup", "Event Statistics") ?? ""; if (correction) Object.assign(formations, correction.formations);
+  let fallbackSource: string | undefined; if (!statistics.length || lineups.filter((p) => !isNaN(Number(p.number))).length < 11 || !formations[match.homeTeamId] || !formations[match.awayTeamId]) { const fallback = await fallbackReport(match); if (!statistics.length && fallback.statistics.length) statistics = fallback.statistics; if (lineups.length < 11 && fallback.lineups.length) lineups = fallback.lineups; for (const [teamId, formation] of Object.entries(fallback.formations)) formations[teamId] ||= formation; fallbackSource = fallback.source; }
+  if (!formations[match.homeTeamId]) delete formations[match.homeTeamId]; if (!formations[match.awayTeamId]) delete formations[match.awayTeamId];
+  return NextResponse.json({ goals, statistics, lineups, formations, availability: { goals: goals.length > 0, statistics: statistics.length > 0, lineups: lineups.length > 0 }, lineupSource: correction ? "verified-correction+provider" : fallbackSource ? "provider+secondary-public-source" : publicLineups.length > apiLineups.length ? "public-event-page+api" : "api", fallbackSource });
 }
