@@ -7,6 +7,8 @@ import type { CompetitionPreferences, Match, Team } from "@/lib/types";
 
 const STORAGE_KEY = "clubpulse-preferences";
 const ONBOARDING_KEY = "clubpulse-onboarding-complete";
+const PREVIEW_REFRESH_KEY = "clubpulse-preview-match-refresh";
+const PREVIEW_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 const defaultPreferences: CompetitionPreferences = { competitionIds: [], teamIdsByCompetition: {} };
 
 type LiveStatus = "idle" | "loading" | "loaded" | "error";
@@ -49,6 +51,12 @@ function startOfLocalDay(value = new Date()) {
 
 function endOfLocalDay(value = new Date()) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate() + 1).getTime();
+}
+
+function normalizeArtworkSrc(src?: string) {
+  if (!src) return undefined;
+  const base = src.replace(/\/(?:tiny|small|medium|large|original)\/?$/i, "");
+  return `${base}/tiny`;
 }
 
 function parseCompetitionPreferences(value: unknown): CompetitionPreferences | null {
@@ -131,17 +139,37 @@ export default function ClubPulseDashboard() {
       setLiveStatus("idle");
       return;
     }
+
     const controller = new AbortController();
     setLiveStatus("loading");
-    Promise.all(preferences.competitionIds.map(async (competitionId) => {
-      const params = new URLSearchParams({ competitionIds: competitionId });
-      const selectedTeamIds = preferences.teamIdsByCompetition[competitionId] ?? [];
-      if (selectedTeamIds.length > 0) params.set("teamIds", selectedTeamIds.join(","));
-      const response = await fetch(`/api/matches?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
-      const payload = await response.json() as MatchesPayload;
-      if (!response.ok) throw new Error(payload.error ?? `ClubPulse match API returned ${response.status}`);
-      return payload;
-    }))
+
+    async function loadMatches() {
+      const lastRefresh = Number(window.localStorage.getItem(PREVIEW_REFRESH_KEY) ?? 0);
+      if (!lastRefresh || Date.now() - lastRefresh >= PREVIEW_REFRESH_INTERVAL_MS) {
+        try {
+          const refreshResponse = await fetch("/api/preview/ingest", { signal: controller.signal, cache: "no-store" });
+          // The endpoint is intentionally 404 outside Preview. Record the check in
+          // either case so production browsers do not repeatedly probe it.
+          if (refreshResponse.ok || refreshResponse.status === 404) {
+            window.localStorage.setItem(PREVIEW_REFRESH_KEY, String(Date.now()));
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") throw error;
+        }
+      }
+
+      return Promise.all(preferences.competitionIds.map(async (competitionId) => {
+        const params = new URLSearchParams({ competitionIds: competitionId });
+        const selectedTeamIds = preferences.teamIdsByCompetition[competitionId] ?? [];
+        if (selectedTeamIds.length > 0) params.set("teamIds", selectedTeamIds.join(","));
+        const response = await fetch(`/api/matches?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
+        const payload = await response.json() as MatchesPayload;
+        if (!response.ok) throw new Error(payload.error ?? `ClubPulse match API returned ${response.status}`);
+        return payload;
+      }));
+    }
+
+    void loadMatches()
       .then((payloads) => {
         const matches = new Map<string, Match>();
         const teams = new Map<string, Team>();
@@ -159,6 +187,7 @@ export default function ClubPulseDashboard() {
         setLiveTeams([]);
         setLiveStatus("error");
       });
+
     return () => controller.abort();
   }, [hydrated, preferences.competitionIds, preferences.teamIdsByCompetition]);
 
@@ -171,7 +200,10 @@ export default function ClubPulseDashboard() {
 
   const windowMatches = relevantMatches.filter((match) => {
     const timestamp = +new Date(match.date);
-    if (activeWindow === "previous") return match.status === "finished" && timestamp >= previousStart && timestamp < todayStart;
+    if (activeWindow === "previous") {
+      const hasResult = match.status === "finished" || (match.homeScore !== undefined && match.awayScore !== undefined);
+      return hasResult && timestamp >= previousStart && timestamp < todayStart;
+    }
     if (activeWindow === "today") return timestamp >= todayStart && timestamp < tomorrowStart;
     return timestamp >= tomorrowStart && timestamp < nextEnd;
   }).sort((a, b) => activeWindow === "previous" ? +new Date(b.date) - +new Date(a.date) : +new Date(a.date) - +new Date(b.date));
@@ -223,7 +255,7 @@ export default function ClubPulseDashboard() {
       {settingsOpen && onboardingComplete ? <Onboarding preferences={preferences} competitions={competitions} selectedCompetitions={selectedCompetitions} catalogStatus={catalogStatus} onToggleCompetition={toggleCompetition} onToggleTeam={toggleTeam} onFollowAllTeams={followAllTeams} onComplete={() => setSettingsOpen(false)} /> : !onboardingComplete ? <Onboarding preferences={preferences} competitions={competitions} selectedCompetitions={selectedCompetitions} catalogStatus={catalogStatus} onToggleCompetition={toggleCompetition} onToggleTeam={toggleTeam} onFollowAllTeams={followAllTeams} onComplete={completeOnboarding} /> : <div className="space-y-6">
         <MatchWindowSelector active={activeWindow} onChange={setActiveWindow} />
         <CompetitionFilter selectedCompetitions={selectedCompetitions} activeCompetitionId={activeCompetitionId} onChange={setActiveCompetitionId} />
-        <DashboardMatchList window={activeWindow} status={liveStatus} matches={windowMatches} groups={groupMatchesByDay(windowMatches)} teamMap={teamMap} teamSelectionsByCompetition={preferences.teamIdsByCompetition} />
+        <DashboardMatchList status={liveStatus} groups={groupMatchesByDay(windowMatches)} teamMap={teamMap} teamSelectionsByCompetition={preferences.teamIdsByCompetition} />
       </div>}
     </div>
   </main>;
@@ -267,11 +299,9 @@ function CompetitionFilter({ selectedCompetitions, activeCompetitionId, onChange
   </div></section>;
 }
 
-function DashboardMatchList({ window, status, matches, groups, teamMap, teamSelectionsByCompetition }: { window: MatchWindow; status: LiveStatus; matches: Match[]; groups: { key: string; label: string; matches: Match[] }[]; teamMap: Map<string, Team>; teamSelectionsByCompetition: Record<string, string[]> }) {
-  const title = window === "previous" ? "Previous 7 days" : window === "today" ? "Today" : "Next 7 days";
-  const emptyText = status === "loading" ? "Loading games…" : status === "error" ? "Games are temporarily unavailable." : window === "previous" ? "No results in the previous 7 days." : window === "today" ? "No games today." : "No games scheduled in the next 7 days.";
+function DashboardMatchList({ status, groups, teamMap, teamSelectionsByCompetition }: { status: LiveStatus; groups: { key: string; label: string; matches: Match[] }[]; teamMap: Map<string, Team>; teamSelectionsByCompetition: Record<string, string[]> }) {
+  const emptyText = status === "loading" ? "Loading games…" : status === "error" ? "Games are temporarily unavailable." : "No games in this period.";
   return <section>
-    <div className="mb-5 flex items-end justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">Matches</p><h1 className="mt-1 text-2xl font-black text-white sm:text-3xl">{title}</h1></div><span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-bold text-slate-400">{matches.length} {matches.length === 1 ? "game" : "games"}</span></div>
     {groups.length === 0 ? <EmptyState text={emptyText} /> : <div className="space-y-7">{groups.map((group) => <div key={group.key}><div className="mb-3 flex items-center gap-3"><h2 className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">{group.label}</h2><div className="h-px flex-1 bg-slate-800" /></div><div className="space-y-3">{group.matches.map((match) => <MatchCard key={match.id} match={match} teamMap={teamMap} selectedTeamIds={teamSelectionsByCompetition[match.competitionId] ?? []} />)}</div></div>)}</div>}
   </section>;
 }
@@ -293,7 +323,16 @@ function MatchCard({ match, teamMap, selectedTeamIds }: { match: Match; teamMap:
 }
 
 function TeamDisplay({ team, followed, align }: { team?: Team; followed: boolean; align: "left" | "right" }) {
-  return <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}><div className={`truncate font-bold sm:text-lg ${followed ? "text-white" : "text-slate-400"}`}>{team?.name ?? "Unknown team"}</div>{followed && <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-amber-400">★ Following</div>}</div>;
+  const [imageFailed, setImageFailed] = useState(false);
+  const src = normalizeArtworkSrc(team?.imageUrl);
+  const logo = src && !imageFailed
+    ? <img src={src} alt="" onError={() => setImageFailed(true)} className="h-10 w-10 shrink-0 object-contain sm:h-12 sm:w-12" />
+    : <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-800 text-lg sm:h-12 sm:w-12" aria-hidden="true">⚽</div>;
+  return <div className={`flex min-w-0 items-center gap-3 ${align === "right" ? "justify-end" : "justify-start"}`}>
+    {align === "left" && logo}
+    <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}><div className={`truncate font-bold sm:text-lg ${followed ? "text-white" : "text-slate-400"}`}>{team?.name ?? "Unknown team"}</div>{followed && <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-amber-400">★ Following</div>}</div>
+    {align === "right" && logo}
+  </div>;
 }
 
 function EmptyState({ text }: { text: string }) {
