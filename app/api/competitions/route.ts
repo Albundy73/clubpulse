@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server";
 import { SUPPORTED_FOOTBALL_COMPETITION_IDS } from "@/lib/sources/thesportsdb-competitions";
+import { competitionDisplayName } from "@/lib/display-names";
 
 export const dynamic = "force-dynamic";
-
-const DISPLAY_NAMES: Record<string, string> = {
-  "thesportsdb-league-4344": "Primeira Liga",
-};
 
 export async function GET() {
   try {
@@ -19,7 +16,7 @@ export async function GET() {
       source: "ClubPulse PostgreSQL",
       competitions: competitions.map((competition) => ({
         id: competition.id,
-        name: DISPLAY_NAMES[competition.id] ?? competition.name,
+        name: competitionDisplayName(competition.sourceExternalId, competition.name),
         season: competition.season ?? undefined,
         imageUrl: competition.imageUrl ?? undefined,
         sportId: competition.sportId,
