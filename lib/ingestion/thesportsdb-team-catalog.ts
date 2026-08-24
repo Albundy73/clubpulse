@@ -1,10 +1,23 @@
 import { prisma } from "@/lib/db";
-import { fetchTheSportsDbSupportedCompetitionTeams } from "@/lib/sources/thesportsdb-competition-teams";
+import { fetchTheSportsDbSupportedCompetitionTeams, SUPPORTED_FOOTBALL_COMPETITIONS } from "@/lib/sources/thesportsdb-competition-teams";
 
 const PROVIDER = "thesportsdb";
 const FOOTBALL_SPORT_ID = "football";
 
+function alignSupportedTeamCatalogCompetitions() {
+  const competitions = SUPPORTED_FOOTBALL_COMPETITIONS as unknown as Array<{
+    externalId: string;
+    name: string;
+    expectedTeamCount?: number;
+    tournament?: boolean;
+  }>;
+  const ligue2Index = competitions.findIndex((competition) => competition.externalId === "4401");
+  if (ligue2Index >= 0) competitions.splice(ligue2Index, 1, { externalId: "4484", name: "Coupe de France", tournament: true });
+  else if (!competitions.some((competition) => competition.externalId === "4484")) competitions.push({ externalId: "4484", name: "Coupe de France", tournament: true });
+}
+
 export async function syncTheSportsDbCompetitionTeamCatalog() {
+  alignSupportedTeamCatalogCompetitions();
   const competitions = await prisma.competition.findMany({ where: { sourceProvider: PROVIDER }, select: { sourceExternalId: true, season: true } });
   const seasonByExternalId = new Map<string, string | undefined>();
   for (const competition of competitions) if (competition.sourceExternalId) seasonByExternalId.set(competition.sourceExternalId, competition.season ?? undefined);
