@@ -12,8 +12,8 @@ function alignSupportedTeamCatalogCompetitions() {
     tournament?: boolean;
   }>;
   const ligue2Index = competitions.findIndex((competition) => competition.externalId === "4401");
-  if (ligue2Index >= 0) competitions.splice(ligue2Index, 1, { externalId: "4484", name: "Coupe de France" });
-  else if (!competitions.some((competition) => competition.externalId === "4484")) competitions.push({ externalId: "4484", name: "Coupe de France" });
+  if (ligue2Index >= 0) competitions.splice(ligue2Index, 1, { externalId: "4484", name: "Coupe de France", tournament: true });
+  else if (!competitions.some((competition) => competition.externalId === "4484")) competitions.push({ externalId: "4484", name: "Coupe de France", tournament: true });
 }
 
 export async function syncTheSportsDbCompetitionTeamCatalog() {
