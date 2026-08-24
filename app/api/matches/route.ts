@@ -9,6 +9,18 @@ function csvParam(request: NextRequest, name: string) {
     .filter(Boolean);
 }
 
+function displayName(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function competitionDisplayName(id: string, value: string) {
+  return id === "thesportsdb-league-4344" ? "Primeira Liga" : value;
+}
+
 export async function GET(request: NextRequest) {
   const competitionIds = csvParam(request, "competitionIds");
   const teamIds = csvParam(request, "teamIds");
@@ -86,7 +98,7 @@ export async function GET(request: NextRequest) {
         teamById.set(team.id, {
           id: team.id,
           clubId: team.clubId,
-          name: team.name,
+          name: displayName(team.name),
           category: team.category,
           imageUrl: team.imageUrl ?? undefined,
           source: {
@@ -103,7 +115,7 @@ export async function GET(request: NextRequest) {
       id: row.id,
       sportId: row.sportId,
       competitionId: row.competitionId,
-      competition: row.competition.name,
+      competition: competitionDisplayName(row.competitionId, row.competition.name),
       homeTeamId: row.homeTeamId,
       awayTeamId: row.awayTeamId,
       date: row.scheduledAt.toISOString(),
