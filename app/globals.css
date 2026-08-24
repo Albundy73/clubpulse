@@ -90,3 +90,26 @@ article .min-w-0.text-right > .text-amber-400::before {
   content: "★";
   font-size: 0.75rem;
 }
+
+/* Preferences summary: teams are now grouped under each competition by the
+   summary component, so hide the older flat Favorites block and its Teams
+   label. Keep Apply as a page-level action visually above the summary card. */
+aside.lg\:sticky > .mt-5.space-y-5 > div:first-child {
+  display: none;
+}
+
+aside.lg\:sticky > .mt-5.space-y-5 > div:nth-child(2) > .text-xs.text-slate-400 {
+  display: none;
+}
+
+@media (min-width: 64rem) {
+  aside.lg\:sticky {
+    margin-top: 3.75rem;
+  }
+
+  aside.lg\:sticky > .flex.items-center.justify-between.gap-4 > button {
+    position: absolute;
+    top: -3.75rem;
+    right: 0;
+  }
+}
