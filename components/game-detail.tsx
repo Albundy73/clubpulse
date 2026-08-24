@@ -33,6 +33,7 @@ type ReportPayload = {
   goals?: { teamId?: string; teamName?: string; player: string; minute: string }[];
   statistics?: { label: string; home: string; away: string }[];
   lineups?: ReportPlayer[];
+  formations?: Record<string, string>;
   availability?: { goals: boolean; statistics: boolean; lineups: boolean };
 };
 
@@ -108,15 +109,9 @@ function StatisticRow({ label, home, away }: { label: string; home: string; away
   </div>;
 }
 
-type PitchRole = "goalkeeper" | "defence" | "midfield" | "attack";
-
-function pitchRole(position?: string): PitchRole {
+function isGoalkeeper(position?: string) {
   const value = (position ?? "").toLowerCase();
-  if (value.includes("goalkeeper") || value === "gk") return "goalkeeper";
-  if (value.includes("back") || value.includes("defender") || value.includes("defence")) return "defence";
-  if (value.includes("midfield") || value.includes("midfielder")) return "midfield";
-  if (value.includes("winger") || value.includes("forward") || value.includes("striker") || value.includes("attack")) return "attack";
-  return "midfield";
+  return value.includes("goalkeeper") || value === "gk";
 }
 
 function displayPlayerName(name: string) {
@@ -133,55 +128,72 @@ function spreadPlayers(players: ReportPlayer[], y: number) {
   }));
 }
 
+function parseFormation(formation?: string) {
+  if (!formation) return undefined;
+  const numbers = formation.split("-").map((value) => Number.parseInt(value, 10)).filter(Number.isFinite);
+  return numbers.length >= 2 && numbers.reduce((sum, value) => sum + value, 0) === 10 ? numbers : undefined;
+}
+
+function fallbackFormation(players: ReportPlayer[]) {
+  const outfield = players.filter((player) => !isGoalkeeper(player.position));
+  const defenders = outfield.filter((player) => /back|defender|defence/i.test(player.position ?? "")).length;
+  const attackers = outfield.filter((player) => /winger|forward|striker|attack/i.test(player.position ?? "")).length;
+  const midfielders = Math.max(0, 10 - defenders - attackers);
+  if (defenders + midfielders + attackers === 10 && defenders > 0 && attackers > 0) return [defenders, midfielders, attackers];
+  return [4, 4, 2];
+}
+
 function PitchPlayer({ player, x, y, tone }: { player: ReportPlayer; x: number; y: number; tone: "home" | "away" }) {
   return <div className="absolute z-10 -translate-x-1/2 -translate-y-1/2 text-center" style={{ left: `${x}%`, top: `${y}%` }}>
-    <div className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full border-2 border-white/80 text-xs font-black text-white shadow-lg ${tone === "home" ? "bg-sky-700" : "bg-amber-600"}`}>
+    <div className={`mx-auto flex h-10 w-10 items-center justify-center rounded-full border-2 border-white/80 text-xs font-black text-white shadow-lg ${tone === "home" ? "bg-sky-700" : "bg-amber-600"}`}>
       {player.number ?? "•"}
     </div>
-    <div className="mt-1 max-w-24 truncate rounded bg-slate-950/75 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm sm:text-[11px]">
+    <div className="mt-1 max-w-28 truncate rounded bg-slate-950/80 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm sm:text-xs">
       {displayPlayerName(player.player)}
     </div>
   </div>;
 }
 
-function TeamPitch({ title, players, tone }: { title: string; players: ReportPlayer[]; tone: "home" | "away" }) {
+function TeamPitch({ title, players, tone, formation }: { title: string; players: ReportPlayer[]; tone: "home" | "away"; formation?: string }) {
   const starters = players.filter((player) => !isSubstitute(player.role)).slice(0, 11);
   const substitutes = players.filter((player) => isSubstitute(player.role));
-  const grouped = {
-    goalkeeper: starters.filter((player) => pitchRole(player.position) === "goalkeeper"),
-    defence: starters.filter((player) => pitchRole(player.position) === "defence"),
-    midfield: starters.filter((player) => pitchRole(player.position) === "midfield"),
-    attack: starters.filter((player) => pitchRole(player.position) === "attack"),
-  };
+  const goalkeeper = starters.find((player) => isGoalkeeper(player.position)) ?? starters[0];
+  const outfield = starters.filter((player) => player !== goalkeeper);
+  const shape = parseFormation(formation) ?? fallbackFormation(starters);
 
-  const known = new Set([...grouped.goalkeeper, ...grouped.defence, ...grouped.midfield, ...grouped.attack]);
-  const unplaced = starters.filter((player) => !known.has(player));
-  grouped.midfield.push(...unplaced);
+  let cursor = 0;
+  const layers = shape.map((count) => {
+    const playersInLayer = outfield.slice(cursor, cursor + count);
+    cursor += count;
+    return playersInLayer;
+  });
+  if (cursor < outfield.length && layers.length) layers[layers.length - 1].push(...outfield.slice(cursor));
 
+  const bottomY = 70;
+  const topY = 17;
+  const step = layers.length > 1 ? (bottomY - topY) / (layers.length - 1) : 0;
   const positions = [
-    ...spreadPlayers(grouped.goalkeeper.length ? grouped.goalkeeper : starters.slice(0, 1), 88),
-    ...spreadPlayers(grouped.defence, 68),
-    ...spreadPlayers(grouped.midfield, 43),
-    ...spreadPlayers(grouped.attack, 18),
+    ...(goalkeeper ? spreadPlayers([goalkeeper], 89) : []),
+    ...layers.flatMap((layer, index) => spreadPlayers(layer, bottomY - step * index)),
   ];
 
-  return <div className="min-w-0">
+  return <div className="mx-auto w-full max-w-3xl">
     <div className="mb-3 flex items-center justify-between gap-3">
       <h3 className="font-black text-white">{title}</h3>
-      <span className="text-xs font-semibold text-slate-500">Starting XI</span>
+      <span className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1 text-xs font-black text-slate-300">{formation ?? shape.join("-")}</span>
     </div>
-    <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-emerald-400/30 bg-emerald-900/80 shadow-inner">
+    <div className="relative aspect-[4/5] overflow-hidden rounded-xl border border-emerald-400/30 bg-emerald-900/80 shadow-inner sm:aspect-[3/2]">
       <div className="absolute inset-3 rounded-lg border-2 border-white/25" />
       <div className="absolute left-3 right-3 top-1/2 border-t-2 border-white/20" />
-      <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/20" />
+      <div className="absolute left-1/2 top-1/2 h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/20" />
       <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/30" />
-      <div className="absolute left-1/2 top-3 h-14 w-40 -translate-x-1/2 border-x-2 border-b-2 border-white/20" />
-      <div className="absolute bottom-3 left-1/2 h-14 w-40 -translate-x-1/2 border-x-2 border-t-2 border-white/20" />
+      <div className="absolute left-1/2 top-3 h-16 w-44 -translate-x-1/2 border-x-2 border-b-2 border-white/20" />
+      <div className="absolute bottom-3 left-1/2 h-16 w-44 -translate-x-1/2 border-x-2 border-t-2 border-white/20" />
       {positions.map(({ player, x, y }, index) => <PitchPlayer key={`${player.player}-${index}`} player={player} x={x} y={y} tone={tone} />)}
     </div>
     {substitutes.length > 0 && <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
       <div className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">Substitutes</div>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {substitutes.map((player, index) => <div key={`${player.player}-${index}`} className="flex min-w-0 items-center gap-2 text-xs text-slate-300">
           <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-bold text-white ${tone === "home" ? "bg-sky-700" : "bg-amber-600"}`}>{player.number ?? "•"}</span>
           <span className="truncate">{player.player}</span>
@@ -196,6 +208,7 @@ export default function GameDetail({ gameId }: { gameId: string }) {
   const [standings, setStandings] = useState<StandingsPayload | null>(null);
   const [report, setReport] = useState<ReportPayload | null>(null);
   const [preferences, setPreferences] = useState<CompetitionPreferences | null>(null);
+  const [lineupTeamId, setLineupTeamId] = useState<string | null>(null);
 
   useEffect(() => setPreferences(readPreferences()), []);
 
@@ -226,6 +239,17 @@ export default function GameDetail({ gameId }: { gameId: string }) {
   const teamMap = useMemo(() => new Map((game?.teams ?? []).map((team) => [team.id, team])), [game?.teams]);
   const match = game?.match;
 
+  const selected = match ? preferences?.teamIdsByCompetition?.[match.competitionId] ?? [] : [];
+  const followsAll = Boolean(match && preferences?.competitionIds?.includes(match.competitionId) && selected.length === 0);
+  const followed = (id: string) => followsAll || selected.includes(id);
+
+  useEffect(() => {
+    if (!match || lineupTeamId) return;
+    const homeFollowed = followed(match.homeTeamId);
+    const awayFollowed = followed(match.awayTeamId);
+    setLineupTeamId(awayFollowed && !homeFollowed ? match.awayTeamId : match.homeTeamId);
+  }, [match, preferences, lineupTeamId]);
+
   if (!game) return <main className="min-h-screen bg-slate-950 text-white"><div className="mx-auto max-w-6xl px-5 py-10 text-slate-400">Loading game…</div></main>;
   if (!match) return <main className="min-h-screen bg-slate-950 text-white"><div className="mx-auto max-w-6xl px-5 py-10"><a href="/" className="text-sky-300">← Dashboard</a><div className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-8 text-slate-400">{game.error ?? "Game not found."}</div></div></main>;
 
@@ -233,13 +257,13 @@ export default function GameDetail({ gameId }: { gameId: string }) {
   const away = teamMap.get(match.awayTeamId);
   const hasScore = match.homeScore !== undefined && match.awayScore !== undefined;
   const isCompleted = match.status === "finished" || hasScore;
-  const selected = preferences?.teamIdsByCompetition?.[match.competitionId] ?? [];
-  const followsAll = Boolean(preferences?.competitionIds?.includes(match.competitionId) && selected.length === 0);
-  const followed = (id: string) => followsAll || selected.includes(id);
   const goalsFor = (id: string, name?: string) => report?.goals?.filter((goal) => goal.teamId === id || (!goal.teamId && goal.teamName === name)) ?? [];
   const lineupFor = (id: string, name?: string) => report?.lineups?.filter((player) => player.teamId === id || (!player.teamId && player.teamName === name)) ?? [];
   const homeGoals = goalsFor(match.homeTeamId, home?.name);
   const awayGoals = goalsFor(match.awayTeamId, away?.name);
+  const activeLineupId = lineupTeamId ?? match.homeTeamId;
+  const activeLineupTeam = activeLineupId === match.awayTeamId ? away : home;
+  const activeLineupTone = activeLineupId === match.awayTeamId ? "away" as const : "home" as const;
 
   return <main className="min-h-screen bg-slate-950 text-white">
     <header className="border-b border-slate-800"><div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5"><a href="/" className="text-2xl font-black">ClubPulse</a><a href="/" className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-300">← Dashboard</a></div></header>
@@ -265,7 +289,18 @@ export default function GameDetail({ gameId }: { gameId: string }) {
 
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
           <h2 className="border-b border-slate-800 px-5 py-4 text-lg font-black">Lineups</h2>
-          {!report ? <div className="p-8 text-sm text-slate-500">Loading lineups…</div> : report.lineups?.length ? <div className="grid gap-6 p-5 lg:grid-cols-2"><TeamPitch title={home?.name ?? "Home"} players={lineupFor(match.homeTeamId, home?.name)} tone="home" /><TeamPitch title={away?.name ?? "Away"} players={lineupFor(match.awayTeamId, away?.name)} tone="away" /></div> : <div className="p-8 text-sm text-slate-500">Lineups are not available from the provider for this game.</div>}
+          {!report ? <div className="p-8 text-sm text-slate-500">Loading lineups…</div> : report.lineups?.length ? <div>
+            <div className="grid grid-cols-2 border-b border-slate-800 bg-slate-950/30 p-2">
+              {[{ id: match.homeTeamId, team: home }, { id: match.awayTeamId, team: away }].map(({ id, team }) => <button key={id} type="button" onClick={() => setLineupTeamId(id)} className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-bold transition ${activeLineupId === id ? "bg-white text-slate-950" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}>
+                <TeamLogo team={team} size="h-6 w-6" />
+                <span className="truncate">{team?.name ?? "Team"}</span>
+                {followed(id) && <span className="text-amber-400">★</span>}
+              </button>)}
+            </div>
+            <div className="p-5">
+              <TeamPitch title={activeLineupTeam?.name ?? "Team"} players={lineupFor(activeLineupId, activeLineupTeam?.name)} tone={activeLineupTone} formation={report.formations?.[activeLineupId]} />
+            </div>
+          </div> : <div className="p-8 text-sm text-slate-500">Lineups are not available from the provider for this game.</div>}
         </section>
       </>}
 
