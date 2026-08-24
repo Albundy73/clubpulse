@@ -88,7 +88,6 @@ function StatisticRow({ label, home, away }: { label: string; home: string; away
   const awayComparable = awayValue === undefined ? 0 : Math.max(0, awayValue);
   const total = homeComparable + awayComparable;
   const homePercent = total > 0 ? (homeComparable / total) * 100 : 50;
-  const awayPercent = 100 - homePercent;
 
   return <div className="px-5 py-4">
     <div className="grid grid-cols-[1fr_1.4fr_1fr] items-center gap-3 text-sm">
@@ -96,13 +95,10 @@ function StatisticRow({ label, home, away }: { label: string; home: string; away
       <span className="text-center text-slate-400">{label}</span>
       <strong className="text-white">{away}</strong>
     </div>
-    <div className="mt-2 grid grid-cols-2 gap-1" aria-hidden="true">
-      <div className="flex h-1.5 justify-end overflow-hidden rounded-l-full bg-slate-800">
-        <div className="h-full rounded-l-full bg-sky-400" style={{ width: `${homePercent}%` }} />
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-r-full bg-slate-800">
-        <div className="h-full rounded-r-full bg-amber-400" style={{ width: `${awayPercent}%` }} />
-      </div>
+    <div className="relative mt-3 h-2 overflow-visible rounded-full bg-slate-800" aria-hidden="true">
+      <div className="absolute inset-y-0 left-0 rounded-l-full bg-sky-400" style={{ width: `${homePercent}%` }} />
+      <div className="absolute inset-y-0 right-0 rounded-r-full bg-amber-400" style={{ width: `${100 - homePercent}%` }} />
+      <div className="absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_2px_rgba(15,23,42,0.75)]" style={{ left: `${homePercent}%` }} />
     </div>
   </div>;
 }
