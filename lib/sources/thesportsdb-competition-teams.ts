@@ -1,11 +1,10 @@
 const SITE_BASE_URL = "https://www.thesportsdb.com";
 
 export const SUPPORTED_FOOTBALL_COMPETITIONS = [
-  { externalId: "4344", name: "Portuguese Primeira Liga", expectedTeamCount: 18 },
-  { externalId: "4662", name: "Portuguese LigaPro", expectedTeamCount: 18 },
+  { externalId: "4344", name: "Primeira Liga", expectedTeamCount: 18 },
   { externalId: "4510", name: "Taca de Portugal" },
-  { externalId: "4334", name: "French Ligue 1", expectedTeamCount: 18 },
-  { externalId: "4401", name: "French Ligue 2", expectedTeamCount: 18 },
+  { externalId: "4334", name: "Ligue 1", expectedTeamCount: 18 },
+  { externalId: "4401", name: "Ligue 2", expectedTeamCount: 18 },
   { externalId: "4480", name: "UEFA Champions League", tournament: true },
   { externalId: "4481", name: "UEFA Europa League", tournament: true },
 ] as const;
@@ -46,6 +45,13 @@ function decodeHtml(value: string) {
   return value.replace(/&amp;/g, "&").replace(/&#039;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function normalizeDisplayName(value: string) {
+  let decoded = decodeHtml(value);
+  try { decoded = decodeURIComponent(decoded); } catch {}
+  decoded = decoded.trim();
+  return decoded ? decoded.charAt(0).toLocaleUpperCase() + decoded.slice(1) : decoded;
+}
+
 function absoluteArtworkUrl(value?: string | null) {
   if (!value) return undefined;
   const decoded = decodeHtml(value);
@@ -63,16 +69,6 @@ function artworkFromHtml(html: string, kind: "team" | "league") {
   return artworkMatches(html, kind)[0]?.url;
 }
 
-function nearestTeamArtwork(html: string, linkIndex: number) {
-  let best: { distance: number; url: string } | undefined;
-  for (const artwork of artworkMatches(html, "team")) {
-    const distance = Math.abs(artwork.index - linkIndex);
-    if (distance > 1200) continue;
-    if (!best || distance < best.distance) best = { distance, url: artwork.url };
-  }
-  return best?.url;
-}
-
 async function fetchHtml(url: string) {
   const response = await fetch(url, { headers: { Accept: "text/html", "User-Agent": "ClubPulse/1.0 catalog refresh" }, cache: "no-store" });
   return response.ok ? response.text() : null;
@@ -84,15 +80,15 @@ function isGenericTeamLabel(value: string) {
 }
 
 function teamNameFromSlug(slug: string) {
-  return decodeHtml(slug.replace(/-/g, " ").replace(/\bfc\b/gi, "FC").replace(/\bsc\b/gi, "SC").replace(/\bafc\b/gi, "AFC").replace(/\bcf\b/gi, "CF"));
+  return normalizeDisplayName(slug.replace(/-/g, " ").replace(/\bfc\b/gi, "FC").replace(/\bsc\b/gi, "SC").replace(/\bafc\b/gi, "AFC").replace(/\bcf\b/gi, "CF"));
 }
 
 function teamNameFromAnchor(anchorBody: string, slug: string) {
-  const text = decodeHtml(anchorBody.replace(/<[^>]*>/g, " "));
+  const text = normalizeDisplayName(anchorBody.replace(/<[^>]*>/g, " "));
   if (text && !isGenericTeamLabel(text)) return text;
-  const alt = decodeHtml(anchorBody.match(/\balt=["']([^"']+)["']/i)?.[1] ?? "");
+  const alt = normalizeDisplayName(anchorBody.match(/\balt=["']([^"']+)["']/i)?.[1] ?? "");
   if (alt && !isGenericTeamLabel(alt)) {
-    const cleanedAlt = decodeHtml(alt.replace(/\b(?:badge|logo|team)\b/gi, " "));
+    const cleanedAlt = normalizeDisplayName(alt.replace(/\b(?:badge|logo|team)\b/gi, " "));
     if (cleanedAlt && !isGenericTeamLabel(cleanedAlt)) return cleanedAlt;
   }
   return teamNameFromSlug(slug);
@@ -100,15 +96,17 @@ function teamNameFromAnchor(anchorBody: string, slug: string) {
 
 function extractCanonicalTeamLinks(html: string) {
   const teamById = new Map<string, SportsDbTeam>();
-  const add = (idTeam: string, slug: string, body: string, linkIndex: number) => {
+  const add = (idTeam: string, slug: string, body: string) => {
     const strTeam = teamNameFromAnchor(body, slug);
-    const strBadge = artworkFromHtml(body, "team") ?? nearestTeamArtwork(html, linkIndex);
+    // Only trust artwork that is inside the team's own anchor. The previous
+    // nearest-image heuristic could assign one badge to neighboring teams.
+    const strBadge = artworkFromHtml(body, "team");
     if (idTeam && strTeam) teamById.set(idTeam, { idTeam, strTeam, strSport: "Soccer", strBadge, pageSlug: slug });
   };
   const filterPattern = /<a\b[^>]*href=["'][^"']*(?:&amp;|&)t=(\d+)-([^"'&<>\s]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(filterPattern)) add(match[1], match[2] ?? "", match[3] ?? "", match.index ?? 0);
+  for (const match of html.matchAll(filterPattern)) add(match[1], match[2] ?? "", match[3] ?? "");
   const teamPagePattern = /<a\b[^>]*href=["'][^"']*\/team\/(\d+)-([^"'/?#<>\s]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(teamPagePattern)) add(match[1], match[2] ?? "", match[3] ?? "", match.index ?? 0);
+  for (const match of html.matchAll(teamPagePattern)) add(match[1], match[2] ?? "", match[3] ?? "");
   return teamById;
 }
 
@@ -156,9 +154,10 @@ function addTeam(teamById: Map<string, SportsDbTeam>, team: SportsDbTeam | undef
   teamById.set(team.idTeam, existing ? {
     ...team,
     ...existing,
+    strTeam: normalizeDisplayName(existing.strTeam || team.strTeam),
     strBadge: existing.strBadge ?? team.strBadge,
     pageSlug: existing.pageSlug ?? team.pageSlug,
-  } : team);
+  } : { ...team, strTeam: normalizeDisplayName(team.strTeam) });
 }
 
 async function enrichMissingTeamArtwork(teamById: Map<string, SportsDbTeam>) {
