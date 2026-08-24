@@ -36,6 +36,7 @@ export type Team = {
   clubId: string;
   name: string;
   category: string;
+  imageUrl?: string;
   source?: EntitySource;
 };
 
@@ -45,6 +46,7 @@ export type Competition = {
   name: string;
   season?: string;
   countryId?: string;
+  imageUrl?: string;
   source?: EntitySource;
 };
 
@@ -66,8 +68,18 @@ export type Match = {
   source: EntitySource;
 };
 
+/** Legacy preference shape kept until the dashboard migration is complete. */
 export type UserPreferences = {
   countryId: string;
   cityId: string;
   sportIds: string[];
+};
+
+/**
+ * Competition-first preferences. An empty team list for a competition means
+ * "all teams" in that competition. Non-empty lists are explicit team filters.
+ */
+export type CompetitionPreferences = {
+  competitionIds: string[];
+  teamIdsByCompetition: Record<string, string[]>;
 };

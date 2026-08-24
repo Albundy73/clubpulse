@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "sh -c 'attempt=1; while ! prisma migrate deploy; do if [ $attempt -ge 5 ]; then echo \"Prisma migration failed after $attempt attempts\"; exit 1; fi; wait_seconds=$((attempt * 5)); echo \"Prisma migration attempt $attempt failed; retrying in ${wait_seconds}s...\"; sleep $wait_seconds; attempt=$((attempt + 1)); done; next build'",
     "start": "next start",
     "lint": "eslint",
     "db:migrate:deploy": "prisma migrate deploy",
@@ -25,8 +25,6 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.3.1",
     "prisma": "^7.9.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.12",

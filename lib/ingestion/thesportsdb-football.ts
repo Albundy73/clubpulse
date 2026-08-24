@@ -1,22 +1,8 @@
-import {
-  FOOTBALL_SPORT,
-  PORTUGAL,
-  PORTUGAL_COMPETITION_EXTERNAL_IDS,
-  PORTUGAL_FOOTBALL_CITIES,
-  TRACKED_PORTUGAL_FOOTBALL_TEAM_BY_ID,
-} from "@/lib/catalog/portugal-football";
+import { FOOTBALL_SPORT } from "@/lib/catalog/portugal-football";
 import { prisma } from "@/lib/db";
 import { fetchTheSportsDbFootballFeed } from "@/lib/sources/thesportsdb-football";
 
 const PROVIDER = "thesportsdb";
-
-function sourceFields(source?: { provider: string; externalId: string; url?: string }) {
-  return {
-    sourceProvider: source?.provider ?? null,
-    sourceExternalId: source?.externalId ?? null,
-    sourceUrl: source?.url ?? null,
-  };
-}
 
 function competitionExternalId(competitionId: string) {
   return competitionId.replace("thesportsdb-league-", "");
@@ -41,76 +27,41 @@ export async function ingestTheSportsDbFootball() {
     update: { name: FOOTBALL_SPORT.name },
   });
 
-  await prisma.country.upsert({
-    where: { id: PORTUGAL.id },
-    create: PORTUGAL,
-    update: { name: PORTUGAL.name },
-  });
+  const canonicalTeamId = new Map<string, string>();
 
-  for (const city of PORTUGAL_FOOTBALL_CITIES) {
-    await prisma.city.upsert({
-      where: { id: city.id },
-      create: city,
-      update: { name: city.name, countryId: city.countryId },
-    });
-  }
-
-  // Canonical local identities come from one catalog. Provider IDs are stored
-  // only as source metadata on the Team, so changing providers does not change
-  // ClubPulse IDs or city mappings.
-  for (const tracked of feed.trackedTeams) {
-    const local = TRACKED_PORTUGAL_FOOTBALL_TEAM_BY_ID.get(tracked.localTeamId);
-    if (!local) {
-      throw new Error(`Missing canonical mapping for tracked team ${tracked.localTeamId}`);
-    }
-
-    await prisma.club.upsert({
-      where: { id: local.club.id },
-      create: {
-        id: local.club.id,
-        name: local.club.name,
-        shortName: tracked.providerTeamName,
-        cityId: local.club.cityId,
-        sportId: FOOTBALL_SPORT.id,
-      },
-      update: {
-        name: local.club.name,
-        shortName: tracked.providerTeamName,
-        cityId: local.club.cityId,
-        sportId: FOOTBALL_SPORT.id,
-      },
-    });
-
-    await prisma.team.upsert({
-      where: { id: tracked.localTeamId },
-      create: {
-        id: tracked.localTeamId,
-        clubId: local.club.id,
-        name: tracked.providerTeamName,
-        category: "Senior Men",
-        sourceProvider: PROVIDER,
-        sourceExternalId: tracked.providerTeamId,
-      },
-      update: {
-        clubId: local.club.id,
-        name: tracked.providerTeamName,
-        category: "Senior Men",
-        sourceProvider: PROVIDER,
-        sourceExternalId: tracked.providerTeamId,
-      },
-    });
-  }
-
-  // Opponents discovered through a provider do not automatically become local
-  // clubs. Keep their location unknown instead of assigning a fabricated city.
   for (const team of feed.teams) {
-    const source = team.source;
-    if (!source?.externalId) {
+    const sourceExternalId = team.source?.externalId;
+    if (!sourceExternalId) {
       throw new Error(`TheSportsDB team ${team.id} is missing source metadata`);
     }
 
-    const providerClubId = `thesportsdb-club-${source.externalId}`;
+    const bySource = await prisma.team.findUnique({
+      where: {
+        sourceProvider_sourceExternalId: {
+          sourceProvider: PROVIDER,
+          sourceExternalId,
+        },
+      },
+    });
+    const byId = bySource ? null : await prisma.team.findUnique({ where: { id: team.id } });
+    const existing = bySource ?? byId;
 
+    if (existing) {
+      await prisma.team.update({
+        where: { id: existing.id },
+        data: {
+          name: team.name,
+          category: team.category,
+          sourceProvider: PROVIDER,
+          sourceExternalId,
+          sourceUrl: team.source?.url ?? existing.sourceUrl,
+        },
+      });
+      canonicalTeamId.set(team.id, existing.id);
+      continue;
+    }
+
+    const providerClubId = `thesportsdb-club-${sourceExternalId}`;
     await prisma.club.upsert({
       where: { id: providerClubId },
       create: {
@@ -119,49 +70,45 @@ export async function ingestTheSportsDbFootball() {
         shortName: team.name,
         cityId: null,
         sportId: FOOTBALL_SPORT.id,
-        ...sourceFields(source),
+        sourceProvider: PROVIDER,
+        sourceExternalId,
+        sourceUrl: team.source?.url ?? null,
       },
       update: {
         name: team.name,
         shortName: team.name,
-        cityId: null,
         sportId: FOOTBALL_SPORT.id,
-        ...sourceFields(source),
+        sourceProvider: PROVIDER,
+        sourceExternalId,
+        sourceUrl: team.source?.url ?? undefined,
       },
     });
 
-    await prisma.team.upsert({
-      where: { id: team.id },
-      create: {
+    await prisma.team.create({
+      data: {
         id: team.id,
         clubId: providerClubId,
         name: team.name,
         category: team.category,
-        ...sourceFields(source),
-      },
-      update: {
-        clubId: providerClubId,
-        name: team.name,
-        category: team.category,
-        ...sourceFields(source),
+        sourceProvider: PROVIDER,
+        sourceExternalId,
+        sourceUrl: team.source?.url ?? null,
       },
     });
+    canonicalTeamId.set(team.id, team.id);
   }
 
   const competitions = new Map<
     string,
-    { name: string; season: string | null; externalId: string; countryId: string | null }
+    { name: string; season: string | null; externalId: string }
   >();
 
   for (const match of feed.matches) {
     if (competitions.has(match.competitionId)) continue;
-
-    const externalId = competitionExternalId(match.competitionId);
     competitions.set(match.competitionId, {
       name: match.competition,
       season: competitionSeason(match.date),
-      externalId,
-      countryId: PORTUGAL_COMPETITION_EXTERNAL_IDS.has(externalId) ? PORTUGAL.id : null,
+      externalId: competitionExternalId(match.competitionId),
     });
   }
 
@@ -171,7 +118,7 @@ export async function ingestTheSportsDbFootball() {
       create: {
         id,
         sportId: FOOTBALL_SPORT.id,
-        countryId: competition.countryId,
+        countryId: null,
         name: competition.name,
         season: competition.season,
         sourceProvider: PROVIDER,
@@ -179,7 +126,6 @@ export async function ingestTheSportsDbFootball() {
       },
       update: {
         sportId: FOOTBALL_SPORT.id,
-        countryId: competition.countryId,
         name: competition.name,
         season: competition.season,
         sourceProvider: PROVIDER,
@@ -190,6 +136,9 @@ export async function ingestTheSportsDbFootball() {
 
   let createdOrUpdated = 0;
   for (const match of feed.matches) {
+    const homeTeamId = canonicalTeamId.get(match.homeTeamId) ?? match.homeTeamId;
+    const awayTeamId = canonicalTeamId.get(match.awayTeamId) ?? match.awayTeamId;
+
     await prisma.match.upsert({
       where: {
         sourceProvider_sourceExternalId: {
@@ -201,8 +150,8 @@ export async function ingestTheSportsDbFootball() {
         id: match.id,
         sportId: match.sportId,
         competitionId: match.competitionId,
-        homeTeamId: match.homeTeamId,
-        awayTeamId: match.awayTeamId,
+        homeTeamId,
+        awayTeamId,
         scheduledAt: new Date(match.date),
         venue: match.venue ?? null,
         status: match.status,
@@ -215,8 +164,8 @@ export async function ingestTheSportsDbFootball() {
       update: {
         sportId: match.sportId,
         competitionId: match.competitionId,
-        homeTeamId: match.homeTeamId,
-        awayTeamId: match.awayTeamId,
+        homeTeamId,
+        awayTeamId,
         scheduledAt: new Date(match.date),
         venue: match.venue ?? null,
         status: match.status,
@@ -228,16 +177,12 @@ export async function ingestTheSportsDbFootball() {
     createdOrUpdated += 1;
   }
 
-  // Remove legacy placeholder geography once no clubs reference it. These
-  // deleteMany calls are intentionally safe to repeat on every ingestion.
-  await prisma.city.deleteMany({ where: { id: "external", clubs: { none: {} } } });
-  await prisma.country.deleteMany({ where: { id: "external", cities: { none: {} } } });
-
   return {
     provider: feed.provider,
     fetchedAt: feed.fetchedAt,
-    teamsUpserted: feed.trackedTeams.length + feed.teams.length,
+    teamsUpserted: feed.teams.length,
     competitionsUpserted: competitions.size,
     matchesUpserted: createdOrUpdated,
+    diagnostics: feed.diagnostics,
   };
 }

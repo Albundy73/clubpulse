@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/thesportsdb-catalog",
+      "schedule": "17 4 * * *"
+    }
+  ]
+}

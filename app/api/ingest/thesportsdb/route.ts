@@ -26,12 +26,41 @@ async function run(request: NextRequest) {
 
   try {
     const result = await ingestTheSportsDbFootball();
-    return NextResponse.json({ ok: true, ...result });
+
+    if (process.env.VERCEL_ENV === "preview") {
+      const { prisma } = await import("@/lib/db");
+      const start = new Date();
+      start.setUTCHours(0, 0, 0, 0);
+      start.setUTCDate(start.getUTCDate() - 1);
+      const end = new Date(start);
+      end.setUTCDate(end.getUTCDate() + 2);
+      const recentMatches = await prisma.match.findMany({
+        where: { scheduledAt: { gte: start, lt: end } },
+        include: { competition: true, homeTeam: true, awayTeam: true },
+        orderBy: { scheduledAt: "asc" },
+      });
+      console.info(
+        "Preview recent ingested matches",
+        recentMatches.map((match) => ({
+          eventId: match.sourceExternalId,
+          competition: match.competition.name,
+          home: match.homeTeam.name,
+          away: match.awayTeam.name,
+          scheduledAt: match.scheduledAt.toISOString(),
+          status: match.status,
+          score: match.homeScore === null || match.awayScore === null ? null : `${match.homeScore}-${match.awayScore}`,
+        })),
+      );
+    }
+
+    return NextResponse.json({ ok: true, mode: "matches", ...result });
   } catch (error) {
+    console.error("TheSportsDB match ingestion failed", error);
     return NextResponse.json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : "TheSportsDB ingestion failed",
+        mode: "matches",
+        error: error instanceof Error ? error.message : "TheSportsDB match ingestion failed",
       },
       { status: 500 },
     );

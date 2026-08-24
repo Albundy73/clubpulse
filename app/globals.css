@@ -24,3 +24,32 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* The favorite tree is self-explanatory; keep onboarding and preferences compact. */
+.mt-3.max-w-2xl.text-slate-300,
+.text-sm.font-bold + .mt-1.text-xs.text-slate-400,
+.text-sm.font-bold + .mt-1.text-xs.text-slate-500 {
+  display: none;
+}
+
+/* PreferenceForm currently groups its label and refresh control in this header.
+   Flatten it so the label disappears and the discreet refresh icon sits after
+   the competition tree instead of competing with the primary interaction. */
+div:has(> .flex.flex-wrap.items-start.justify-between.gap-3 > div > .text-sm.font-bold) {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex.flex-wrap.items-start.justify-between.gap-3:has(> div > .text-sm.font-bold) {
+  display: contents;
+}
+
+.flex.flex-wrap.items-start.justify-between.gap-3:has(> div > .text-sm.font-bold) > div:first-child {
+  display: none;
+}
+
+.flex.flex-wrap.items-start.justify-between.gap-3:has(> div > .text-sm.font-bold) > .flex.items-center.justify-end.gap-2 {
+  order: 99;
+  align-self: flex-end;
+  margin-top: 0.75rem;
+}

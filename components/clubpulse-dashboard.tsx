@@ -1,20 +1,24 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { cities, countries, sports } from "@/lib/mock-data";
-import type { Match, Team, UserPreferences } from "@/lib/types";
+import CatalogRefreshControl from "@/components/catalog-refresh-control";
+import PreferenceTeamSummary from "@/components/preference-team-summary";
+import TeamPreferenceAccordion from "@/components/team-preference-accordion";
+import type { CompetitionPreferences, Match, Team } from "@/lib/types";
 
 const STORAGE_KEY = "clubpulse-preferences";
 const ONBOARDING_KEY = "clubpulse-onboarding-complete";
-const defaultPreferences: UserPreferences = { countryId: "pt", cityId: "faro", sportIds: ["football", "basketball"] };
+const PREVIEW_REFRESH_KEY = "clubpulse-preview-match-refresh";
+const PREVIEW_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const defaultPreferences: CompetitionPreferences = { competitionIds: [], teamIdsByCompetition: {} };
 
 type LiveStatus = "idle" | "loading" | "loaded" | "error";
-type MatchesPayload = {
-  matches?: Match[];
-  teams?: Team[];
-  localTeamIds?: string[];
-  error?: string;
-};
+type CatalogStatus = "loading" | "loaded" | "error";
+type MatchWindow = "previous" | "today" | "next";
+type CompetitionOption = { id: string; name: string; season?: string; sportId: string; sport: string; countryId?: string; country?: string; teamCount: number; matchCount: number; imageUrl?: string };
+type MatchesPayload = { matches?: Match[]; teams?: Team[]; error?: string };
+type CompetitionsPayload = { competitions?: CompetitionOption[]; error?: string };
+type LegacyCompetitionPreferences = { competitionIds: string[]; teamIds: string[] };
 
 function formatTime(date: string) {
   return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit" }).format(new Date(date));
@@ -23,11 +27,10 @@ function formatTime(date: string) {
 function formatDayHeading(date: string) {
   const value = new Date(date);
   const today = new Date();
-  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
   const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   if (sameDay(value, today)) return "Today";
-  if (sameDay(value, yesterday)) return "Yesterday";
   if (sameDay(value, tomorrow)) return "Tomorrow";
   return new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(value);
 }
@@ -37,29 +40,71 @@ function dayKey(date: string) {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 }
 
-function groupMatchesByDay<T extends { date: string }>(items: T[]) {
-  const groups = new Map<string, T[]>();
+function groupMatchesByDay(items: Match[]) {
+  const groups = new Map<string, Match[]>();
   for (const item of items) groups.set(dayKey(item.date), [...(groups.get(dayKey(item.date)) ?? []), item]);
-  return Array.from(groups.entries()).map(([key, groupedMatches]) => ({ key, label: formatDayHeading(groupedMatches[0].date), matches: groupedMatches }));
+  return Array.from(groups.entries()).map(([key, matches]) => ({ key, label: formatDayHeading(matches[0].date), matches }));
+}
+
+function startOfLocalDay(value = new Date()) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+}
+
+function endOfLocalDay(value = new Date()) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate() + 1).getTime();
+}
+
+function normalizeArtworkSrc(src?: string) {
+  if (!src) return undefined;
+  const base = src.replace(/\/(?:tiny|small|medium|large|original)\/?$/i, "");
+  return `${base}/tiny`;
+}
+
+function parseCompetitionPreferences(value: unknown): CompetitionPreferences | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<CompetitionPreferences> & Partial<LegacyCompetitionPreferences>;
+  if (!Array.isArray(candidate.competitionIds)) return null;
+  if (candidate.teamIdsByCompetition && typeof candidate.teamIdsByCompetition === "object") {
+    const normalized: Record<string, string[]> = {};
+    for (const competitionId of candidate.competitionIds) {
+      const ids = candidate.teamIdsByCompetition[competitionId];
+      normalized[competitionId] = Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+    }
+    return { competitionIds: candidate.competitionIds, teamIdsByCompetition: normalized };
+  }
+  if (Array.isArray(candidate.teamIds)) {
+    const ids = candidate.teamIds.filter((id): id is string => typeof id === "string");
+    return { competitionIds: candidate.competitionIds, teamIdsByCompetition: Object.fromEntries(candidate.competitionIds.map((competitionId) => [competitionId, ids])) };
+  }
+  return null;
 }
 
 export default function ClubPulseDashboard() {
-  const [preferences, setPreferences] = useState<UserPreferences>(defaultPreferences);
+  const [preferences, setPreferences] = useState<CompetitionPreferences>(defaultPreferences);
   const [hydrated, setHydrated] = useState(false);
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeSportId, setActiveSportId] = useState("all");
+  const [activeCompetitionId, setActiveCompetitionId] = useState("all");
+  const [activeWindow, setActiveWindow] = useState<MatchWindow>("today");
+  const [competitions, setCompetitions] = useState<CompetitionOption[]>([]);
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>("loading");
   const [liveMatches, setLiveMatches] = useState<Match[]>([]);
   const [liveTeams, setLiveTeams] = useState<Team[]>([]);
-  const [localTeamIds, setLocalTeamIds] = useState<Set<string>>(new Set());
   const [liveStatus, setLiveStatus] = useState<LiveStatus>("idle");
 
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) setPreferences(JSON.parse(saved));
-      setOnboardingComplete(window.localStorage.getItem(ONBOARDING_KEY) === "true");
-    } catch { /* use defaults */ } finally { setHydrated(true); }
+      const parsed = parseCompetitionPreferences(saved ? JSON.parse(saved) : null);
+      if (parsed) {
+        setPreferences(parsed);
+        setOnboardingComplete(window.localStorage.getItem(ONBOARDING_KEY) === "true" && parsed.competitionIds.length > 0);
+      } else window.localStorage.removeItem(ONBOARDING_KEY);
+    } catch {
+      window.localStorage.removeItem(ONBOARDING_KEY);
+    } finally {
+      setHydrated(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -67,14 +112,31 @@ export default function ClubPulseDashboard() {
   }, [preferences, hydrated]);
 
   useEffect(() => {
-    if (activeSportId !== "all" && !preferences.sportIds.includes(activeSportId)) setActiveSportId("all");
-  }, [preferences.sportIds, activeSportId]);
+    const controller = new AbortController();
+    setCatalogStatus("loading");
+    fetch("/api/competitions", { signal: controller.signal, cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as CompetitionsPayload;
+        if (!response.ok) throw new Error(payload.error ?? `Competition API returned ${response.status}`);
+        setCompetitions(payload.competitions ?? []);
+        setCatalogStatus("loaded");
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setCompetitions([]);
+        setCatalogStatus("error");
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
-    if (!hydrated || !preferences.cityId || preferences.sportIds.length === 0) {
+    if (activeCompetitionId !== "all" && !preferences.competitionIds.includes(activeCompetitionId)) setActiveCompetitionId("all");
+  }, [preferences.competitionIds, activeCompetitionId]);
+
+  useEffect(() => {
+    if (!hydrated || preferences.competitionIds.length === 0) {
       setLiveMatches([]);
       setLiveTeams([]);
-      setLocalTeamIds(new Set());
       setLiveStatus("idle");
       return;
     }
@@ -82,144 +144,194 @@ export default function ClubPulseDashboard() {
     const controller = new AbortController();
     setLiveStatus("loading");
 
-    Promise.all(preferences.sportIds.map(async (sportId) => {
-      const params = new URLSearchParams({ cityId: preferences.cityId, sportId });
-      const response = await fetch(`/api/matches?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
-      const payload = await response.json() as MatchesPayload;
-      if (!response.ok) throw new Error(payload.error ?? `ClubPulse match API returned ${response.status}`);
-      return payload;
-    }))
-      .then((payloads) => {
-        const matchById = new Map<string, Match>();
-        const teamById = new Map<string, Team>();
-        const localIds = new Set<string>();
-        for (const payload of payloads) {
-          for (const match of payload.matches ?? []) matchById.set(match.id, match);
-          for (const team of payload.teams ?? []) teamById.set(team.id, team);
-          for (const teamId of payload.localTeamIds ?? []) localIds.add(teamId);
+    async function loadMatches() {
+      const lastRefresh = Number(window.localStorage.getItem(PREVIEW_REFRESH_KEY) ?? 0);
+      if (!lastRefresh || Date.now() - lastRefresh >= PREVIEW_REFRESH_INTERVAL_MS) {
+        try {
+          const refreshResponse = await fetch("/api/preview/ingest", { signal: controller.signal, cache: "no-store" });
+          if (refreshResponse.ok || refreshResponse.status === 404) {
+            window.localStorage.setItem(PREVIEW_REFRESH_KEY, String(Date.now()));
+          }
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") throw error;
         }
-        setLiveMatches(Array.from(matchById.values()));
-        setLiveTeams(Array.from(teamById.values()));
-        setLocalTeamIds(localIds);
+      }
+
+      return Promise.all(preferences.competitionIds.map(async (competitionId) => {
+        const params = new URLSearchParams({ competitionIds: competitionId });
+        const selectedTeamIds = preferences.teamIdsByCompetition[competitionId] ?? [];
+        if (selectedTeamIds.length > 0) params.set("teamIds", selectedTeamIds.join(","));
+        const response = await fetch(`/api/matches?${params.toString()}`, { signal: controller.signal, cache: "no-store" });
+        const payload = await response.json() as MatchesPayload;
+        if (!response.ok) throw new Error(payload.error ?? `ClubPulse match API returned ${response.status}`);
+        return payload;
+      }));
+    }
+
+    void loadMatches()
+      .then((payloads) => {
+        const matches = new Map<string, Match>();
+        const teams = new Map<string, Team>();
+        for (const payload of payloads) {
+          for (const match of payload.matches ?? []) matches.set(match.id, match);
+          for (const team of payload.teams ?? []) teams.set(team.id, team);
+        }
+        setLiveMatches(Array.from(matches.values()));
+        setLiveTeams(Array.from(teams.values()));
         setLiveStatus("loaded");
       })
       .catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
         setLiveMatches([]);
         setLiveTeams([]);
-        setLocalTeamIds(new Set());
         setLiveStatus("error");
       });
 
     return () => controller.abort();
-  }, [hydrated, preferences.cityId, preferences.sportIds]);
+  }, [hydrated, preferences.competitionIds, preferences.teamIdsByCompetition]);
 
-  const availableCities = cities.filter((city) => city.countryId === preferences.countryId);
-  const selectedCity = cities.find((city) => city.id === preferences.cityId);
-  const selectedSports = sports.filter((sport) => preferences.sportIds.includes(sport.id));
+  const selectedCompetitions = competitions.filter((competition) => preferences.competitionIds.includes(competition.id));
+  const relevantMatches = liveMatches.filter((match) => activeCompetitionId === "all" || match.competitionId === activeCompetitionId);
+  const todayStart = startOfLocalDay();
+  const tomorrowStart = endOfLocalDay();
+  const previousStart = todayStart - 7 * 24 * 60 * 60 * 1000;
+  const nextEnd = tomorrowStart + 7 * 24 * 60 * 60 * 1000;
 
-  const relevantMatches = liveMatches.filter((match) =>
-    preferences.sportIds.includes(match.sportId) &&
-    (activeSportId === "all" || match.sportId === activeSportId),
-  );
-  const results = relevantMatches.filter((match) => match.status === "finished").sort((a, b) => +new Date(b.date) - +new Date(a.date));
-  const upcoming = relevantMatches.filter((match) => {
-    const diff = +new Date(match.date) - Date.now();
-    return match.status === "scheduled" && diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000;
-  }).sort((a, b) => +new Date(a.date) - +new Date(b.date));
+  const windowMatches = relevantMatches.filter((match) => {
+    const timestamp = +new Date(match.date);
+    if (activeWindow === "previous") {
+      const hasResult = match.status === "finished" || (match.homeScore !== undefined && match.awayScore !== undefined);
+      return hasResult && timestamp >= previousStart && timestamp < todayStart;
+    }
+    if (activeWindow === "today") return timestamp >= todayStart && timestamp < tomorrowStart;
+    return timestamp >= tomorrowStart && timestamp < nextEnd;
+  }).sort((a, b) => activeWindow === "previous" ? +new Date(b.date) - +new Date(a.date) : +new Date(a.date) - +new Date(b.date));
 
-  const sportMap = useMemo(() => new Map(sports.map((sport) => [sport.id, sport])), []);
   const teamMap = useMemo(() => new Map(liveTeams.map((team) => [team.id, team])), [liveTeams]);
 
-  function updatePreference<K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) {
-    setPreferences((current) => ({ ...current, [key]: value }));
+  function toggleCompetition(competitionId: string) {
+    setPreferences((current) => {
+      const selected = current.competitionIds.includes(competitionId);
+      const ids = selected ? current.competitionIds.filter((id) => id !== competitionId) : [...current.competitionIds, competitionId];
+      const selections = { ...current.teamIdsByCompetition };
+      if (selected) delete selections[competitionId]; else selections[competitionId] = [];
+      return { competitionIds: ids, teamIdsByCompetition: selections };
+    });
   }
 
-  function toggleSport(sportId: string) {
-    setPreferences((current) => ({
-      ...current,
-      sportIds: current.sportIds.includes(sportId)
-        ? current.sportIds.filter((id) => id !== sportId)
-        : [...current.sportIds, sportId],
-    }));
+  function toggleTeam(competitionId: string, teamId: string) {
+    setPreferences((current) => {
+      const selected = current.teamIdsByCompetition[competitionId] ?? [];
+      const ids = selected.includes(teamId) ? selected.filter((id) => id !== teamId) : [...selected, teamId];
+      return { ...current, teamIdsByCompetition: { ...current.teamIdsByCompetition, [competitionId]: ids } };
+    });
   }
 
-  function handleCountryChange(countryId: string) {
-    const firstCity = cities.find((city) => city.countryId === countryId);
-    setPreferences((current) => ({ ...current, countryId, cityId: firstCity?.id ?? "" }));
+  function followAllTeams(competitionId: string) {
+    setPreferences((current) => ({ ...current, teamIdsByCompetition: { ...current.teamIdsByCompetition, [competitionId]: [] } }));
   }
 
   function completeOnboarding() {
-    if (!preferences.countryId || !preferences.cityId || preferences.sportIds.length === 0) return;
+    if (!preferences.competitionIds.length) return;
     window.localStorage.setItem(ONBOARDING_KEY, "true");
     setOnboardingComplete(true);
   }
 
-  if (!hydrated) return <main className="min-h-screen bg-slate-50" />;
+  if (!hydrated) return <main className="min-h-screen bg-slate-950" />;
 
-  const emptyResultsText = liveStatus === "loading" ? "Loading results…" : liveStatus === "error" ? "Results are unavailable because PostgreSQL could not be reached." : "No recent results are stored for this sport and city.";
-  const emptyUpcomingText = liveStatus === "loading" ? "Loading upcoming games…" : liveStatus === "error" ? "Upcoming games are unavailable because PostgreSQL could not be reached." : "No upcoming games are stored in the next 7 days for this sport and city.";
-
-  return (
-    <main className="min-h-screen bg-slate-50 text-slate-950">
-      <header className="border-b bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-5">
-          <div><div className="text-2xl font-black tracking-tight">ClubPulse</div><div className="text-sm text-slate-500">Your city. Your clubs. One place.</div></div>
-          {onboardingComplete && <button onClick={() => setSettingsOpen((open) => !open)} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">⚙️ Preferences</button>}
+  return <main className="min-h-screen bg-slate-950 text-white">
+    <header className="border-b border-slate-800 bg-slate-950/95">
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-5">
+        <div>
+          <div className="text-2xl font-black tracking-tight">ClubPulse</div>
+          <div className="text-sm text-slate-400">Your competitions. Your clubs. One place.</div>
         </div>
-      </header>
-
-      {settingsOpen && onboardingComplete && <div className="border-b bg-white shadow-sm"><div className="mx-auto max-w-6xl px-5 py-6"><div className="mb-5 flex items-center justify-between"><div><p className="text-sm font-semibold uppercase tracking-widest text-slate-400">Preferences</p><h2 className="text-xl font-bold">Choose your city and sports</h2></div><button onClick={() => setSettingsOpen(false)} className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-200">Close</button></div><PreferenceForm preferences={preferences} availableCities={availableCities} onCountryChange={handleCountryChange} onCityChange={(id) => updatePreference("cityId", id)} onToggleSport={toggleSport} /></div></div>}
-
-      <div className="mx-auto max-w-6xl space-y-8 px-5 py-8">
-        {!onboardingComplete ? <Onboarding preferences={preferences} availableCities={availableCities} selectedCity={selectedCity} selectedSports={selectedSports} onCountryChange={handleCountryChange} onCityChange={(id) => updatePreference("cityId", id)} onToggleSport={toggleSport} onComplete={completeOnboarding} /> : <>
-          <section className="flex flex-col gap-4 rounded-3xl bg-slate-900 p-6 text-white shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-8"><div><p className="text-sm font-semibold uppercase tracking-widest text-slate-400">Your ClubPulse</p><h1 className="mt-2 text-3xl font-bold sm:text-4xl">Sport in {selectedCity?.name ?? "your city"}</h1></div><div className="flex flex-wrap gap-2">{selectedSports.map((sport) => <span key={sport.id} className="rounded-full bg-slate-800 px-3 py-2 text-sm font-semibold text-slate-200">{sport.icon} {sport.name}</span>)}</div></section>
-          <LiveSourceStatus status={liveStatus} count={liveMatches.length} localCount={localTeamIds.size} />
-          <SportFilter selectedSports={selectedSports} activeSportId={activeSportId} onChange={setActiveSportId} />
-          <MatchSection eyebrow={activeSportId === "all" ? "Selected sports" : sportMap.get(activeSportId)?.name ?? "Selected sport"} title="Latest results" count={results.length} groups={groupMatchesByDay(results)} sportMap={sportMap} teamMap={teamMap} localTeamIds={localTeamIds} result emptyText={emptyResultsText} />
-          <MatchSection eyebrow="Next 7 days" title="Upcoming games" count={upcoming.length} groups={groupMatchesByDay(upcoming)} sportMap={sportMap} teamMap={teamMap} localTeamIds={localTeamIds} emptyText={emptyUpcomingText} />
-        </>}
-        <footer className="border-t py-6 text-center text-xs text-slate-400">ClubPulse · PostgreSQL single source of truth · TheSportsDB ingestion active</footer>
+        {onboardingComplete && <button onClick={() => setSettingsOpen((open) => !open)} className="rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:border-slate-600 hover:bg-slate-800">⚙️ Preferences</button>}
       </div>
-    </main>
-  );
+    </header>
+
+    <div className="mx-auto max-w-6xl px-5 py-8">
+      {settingsOpen && onboardingComplete ? <Onboarding preferences={preferences} competitions={competitions} selectedCompetitions={selectedCompetitions} catalogStatus={catalogStatus} onToggleCompetition={toggleCompetition} onToggleTeam={toggleTeam} onFollowAllTeams={followAllTeams} onComplete={() => setSettingsOpen(false)} /> : !onboardingComplete ? <Onboarding preferences={preferences} competitions={competitions} selectedCompetitions={selectedCompetitions} catalogStatus={catalogStatus} onToggleCompetition={toggleCompetition} onToggleTeam={toggleTeam} onFollowAllTeams={followAllTeams} onComplete={completeOnboarding} /> : <div className="space-y-6">
+        <MatchWindowSelector active={activeWindow} onChange={setActiveWindow} />
+        <CompetitionFilter selectedCompetitions={selectedCompetitions} activeCompetitionId={activeCompetitionId} onChange={setActiveCompetitionId} />
+        <DashboardMatchList status={liveStatus} groups={groupMatchesByDay(windowMatches)} teamMap={teamMap} teamSelectionsByCompetition={preferences.teamIdsByCompetition} />
+      </div>}
+    </div>
+  </main>;
 }
 
-function LiveSourceStatus({ status, count, localCount }: { status: LiveStatus; count: number; localCount: number }) {
-  const text = status === "idle" ? "Waiting to load ClubPulse PostgreSQL" : status === "loading" ? "Loading ClubPulse PostgreSQL…" : status === "loaded" ? `ClubPulse PostgreSQL · ${count} match${count === 1 ? "" : "es"} loaded · ${localCount} local team${localCount === 1 ? "" : "s"}` : "ClubPulse PostgreSQL unavailable — no fallback data is shown";
-  return <div className={`rounded-xl border px-4 py-3 text-sm font-medium ${status === "error" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>{status === "loading" ? "↻" : status === "loaded" ? "✓" : status === "error" ? "!" : "·"} {text}</div>;
+function PreferenceForm({ preferences, competitions, catalogStatus, onToggleCompetition, onToggleTeam, onFollowAllTeams, dark = false }: { preferences: CompetitionPreferences; competitions: CompetitionOption[]; catalogStatus: CatalogStatus; onToggleCompetition: (id: string) => void; onToggleTeam: (competitionId: string, teamId: string) => void; onFollowAllTeams: (competitionId: string) => void; dark?: boolean }) {
+  return <div>{catalogStatus === "loading" ? <p className={`text-sm ${dark ? "text-slate-400" : "text-slate-500"}`}>Loading competitions…</p> : catalogStatus === "error" ? <p className="text-sm text-amber-500">Competition catalog is unavailable.</p> : <TeamPreferenceAccordion competitions={competitions} selectedCompetitionIds={preferences.competitionIds} selectedTeamIdsByCompetition={preferences.teamIdsByCompetition} onToggleCompetition={onToggleCompetition} onToggleTeam={onToggleTeam} onFollowAllTeams={onFollowAllTeams} dark={dark} />}<div className="mt-4 flex justify-end"><CatalogRefreshControl dark={dark} /></div></div>;
 }
 
-function Onboarding({ preferences, availableCities, selectedCity, selectedSports, onCountryChange, onCityChange, onToggleSport, onComplete }: { preferences: UserPreferences; availableCities: typeof cities; selectedCity?: (typeof cities)[number]; selectedSports: typeof sports; onCountryChange: (id: string) => void; onCityChange: (id: string) => void; onToggleSport: (id: string) => void; onComplete: () => void }) {
-  const ready = Boolean(preferences.countryId && preferences.cityId && preferences.sportIds.length);
-  return <section className="overflow-hidden rounded-3xl bg-slate-900 text-white shadow-lg"><div className="border-b border-slate-800 px-6 py-6 sm:px-8"><div className="mb-5 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400"><span className="rounded-full bg-white px-2.5 py-1 text-slate-900">1</span><span>Set up your ClubPulse</span><span className="text-slate-600">of 1</span></div><h1 className="max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">What local sport do you want to follow?</h1><p className="mt-3 max-w-2xl text-slate-300">Tell us where you are and pick at least one sport. We’ll build your dashboard and remember it for next time.</p></div><div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.4fr_0.8fr]"><div><PreferenceForm preferences={preferences} availableCities={availableCities} onCountryChange={onCountryChange} onCityChange={onCityChange} onToggleSport={onToggleSport} dark onboarding /></div><aside className="rounded-2xl border border-slate-700 bg-slate-800/70 p-5"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Your dashboard</p><div className="mt-5 space-y-4"><div><div className="text-xs text-slate-400">Location</div><div className="mt-1 text-lg font-bold">📍 {selectedCity?.name ?? "Choose a city"}</div></div><div><div className="text-xs text-slate-400">Sports</div><div className="mt-2 flex flex-wrap gap-2">{selectedSports.length ? selectedSports.map((sport) => <span key={sport.id} className="rounded-full bg-slate-700 px-2.5 py-1 text-sm font-semibold">{sport.icon} {sport.name}</span>) : <span className="text-sm text-slate-500">Choose at least one sport</span>}</div></div></div></aside></div><div className="flex flex-col gap-3 border-t border-slate-800 bg-slate-950/40 px-6 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8"><p className="text-sm text-slate-400">You can change these choices later from <span className="font-semibold text-slate-200">Preferences</span>.</p><button onClick={onComplete} disabled={!ready} className="rounded-xl bg-white px-6 py-3 font-bold text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">Create my dashboard →</button></div></section>;
+function Onboarding({ preferences, competitions, selectedCompetitions, catalogStatus, onToggleCompetition, onToggleTeam, onFollowAllTeams, onComplete }: { preferences: CompetitionPreferences; competitions: CompetitionOption[]; selectedCompetitions: CompetitionOption[]; catalogStatus: CatalogStatus; onToggleCompetition: (id: string) => void; onToggleTeam: (competitionId: string, teamId: string) => void; onFollowAllTeams: (competitionId: string) => void; onComplete: () => void }) {
+  const ready = preferences.competitionIds.length > 0;
+  return <section className="overflow-hidden rounded-3xl bg-slate-900 text-white shadow-lg"><div className="border-b border-slate-800 px-6 py-6 sm:px-8"><h1 className="max-w-2xl text-3xl font-black tracking-tight sm:text-4xl">What do you want to follow?</h1></div><div className="grid gap-8 p-6 sm:p-8 lg:grid-cols-[1.4fr_0.8fr]"><div><PreferenceForm preferences={preferences} competitions={competitions} catalogStatus={catalogStatus} onToggleCompetition={onToggleCompetition} onToggleTeam={onToggleTeam} onFollowAllTeams={onFollowAllTeams} dark /></div><aside className="rounded-2xl border border-slate-700 bg-slate-800/70 p-5"><p className="text-xs font-bold uppercase tracking-widest text-slate-400">Your dashboard</p><div className="mt-5 space-y-4"><div><div className="text-xs text-slate-400">Favorites</div><div className="mt-2 flex flex-wrap gap-2">{selectedCompetitions.length ? selectedCompetitions.map((competition) => <span key={competition.id} className="rounded-full bg-slate-700 px-2.5 py-1 text-sm font-semibold">★ {competition.name}</span>) : <span className="text-sm text-slate-500">Star at least one competition</span>}</div></div><div><div className="text-xs text-slate-400">Teams</div><div className="mt-2"><PreferenceTeamSummary preferences={preferences} competitions={selectedCompetitions} /></div></div></div></aside></div><div className="flex justify-end border-t border-slate-800 bg-slate-950/40 px-6 py-5 sm:px-8"><button onClick={onComplete} disabled={!ready} className="rounded-xl bg-white px-6 py-3 font-bold text-slate-950 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">Apply</button></div></section>;
 }
 
-function SportFilter({ selectedSports, activeSportId, onChange }: { selectedSports: typeof sports; activeSportId: string; onChange: (id: string) => void }) {
-  const options = [{ id: "all", name: "All sports", icon: "◉" }, ...selectedSports];
-  return <section aria-label="Filter dashboard by sport"><div className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">Filter dashboard</div><div className="flex gap-2 overflow-x-auto pb-1">{options.map((sport) => { const active = activeSportId === sport.id; return <button key={sport.id} onClick={() => onChange(sport.id)} aria-pressed={active} className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? "border-slate-900 bg-slate-900 text-white shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"}`}>{sport.icon} {sport.name}</button>; })}</div></section>;
+function MatchWindowSelector({ active, onChange }: { active: MatchWindow; onChange: (window: MatchWindow) => void }) {
+  const options: { id: MatchWindow; label: string; detail: string }[] = [
+    { id: "previous", label: "Previous", detail: "Last 7 days" },
+    { id: "today", label: "Today", detail: "Today's games" },
+    { id: "next", label: "Next", detail: "Next 7 days" },
+  ];
+  return <nav aria-label="Match period" className="grid grid-cols-3 overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 p-1.5">
+    {options.map((option) => {
+      const selected = active === option.id;
+      return <button key={option.id} type="button" onClick={() => onChange(option.id)} aria-pressed={selected} className={`rounded-xl px-3 py-3 text-center transition sm:px-5 ${selected ? "bg-white text-slate-950 shadow-sm" : "text-slate-400 hover:bg-slate-800 hover:text-white"}`}>
+        <span className="block text-sm font-black sm:text-base">{option.label}</span>
+        <span className={`mt-0.5 hidden text-[11px] sm:block ${selected ? "text-slate-500" : "text-slate-500"}`}>{option.detail}</span>
+      </button>;
+    })}
+  </nav>;
 }
 
-function MatchSection({ eyebrow, title, count, groups, sportMap, teamMap, localTeamIds, result = false, emptyText }: { eyebrow: string; title: string; count: number; groups: { key: string; label: string; matches: Match[] }[]; sportMap: Map<string, (typeof sports)[number]>; teamMap: Map<string, Team>; localTeamIds: Set<string>; result?: boolean; emptyText: string }) {
-  return <section><div className="mb-5 flex items-end justify-between"><div><p className="text-sm font-semibold uppercase tracking-widest text-slate-400">{eyebrow}</p><h2 className="text-2xl font-bold">{title}</h2></div><span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-500">{count} {count === 1 ? "match" : "matches"}</span></div>{groups.length === 0 ? <EmptyState text={emptyText} /> : <div className="space-y-7">{groups.map((group) => <div key={group.key}><div className="mb-3 flex items-center gap-3"><h3 className="text-sm font-black uppercase tracking-wider text-slate-600">{group.label}</h3><div className="h-px flex-1 bg-slate-200" /></div><div className="space-y-3">{group.matches.map((match) => <MatchCard key={match.id} match={match} sport={sportMap.get(match.sportId)} teamMap={teamMap} localTeamIds={localTeamIds} result={result} />)}</div></div>)}</div>}</section>;
+function CompetitionFilter({ selectedCompetitions, activeCompetitionId, onChange }: { selectedCompetitions: CompetitionOption[]; activeCompetitionId: string; onChange: (id: string) => void }) {
+  const options = [{ id: "all", name: "All" }, ...selectedCompetitions.map(({ id, name }) => ({ id, name }))];
+  return <section aria-label="Filter by competition"><div className="flex gap-2 overflow-x-auto pb-1">
+    {options.map((competition) => {
+      const active = activeCompetitionId === competition.id;
+      return <button key={competition.id} onClick={() => onChange(competition.id)} aria-pressed={active} className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition ${active ? "border-sky-400/70 bg-sky-400/15 text-sky-200" : "border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600 hover:text-white"}`}>{competition.name}</button>;
+    })}
+  </div></section>;
 }
 
-function PreferenceForm({ preferences, availableCities, onCountryChange, onCityChange, onToggleSport, dark = false, onboarding = false }: { preferences: UserPreferences; availableCities: typeof cities; onCountryChange: (id: string) => void; onCityChange: (id: string) => void; onToggleSport: (id: string) => void; dark?: boolean; onboarding?: boolean }) {
-  const labelClass = dark ? "text-slate-300" : "text-slate-600";
-  const selectClass = dark ? "border-slate-700 bg-slate-800 text-white focus:border-white" : "border-slate-200 bg-white text-slate-900 focus:border-slate-500";
-  return <><div className="grid gap-4 md:grid-cols-2"><label className="space-y-2"><span className={`text-sm font-semibold ${labelClass}`}>{onboarding && <span className="mr-2 text-slate-500">01</span>}Country</span><select value={preferences.countryId} onChange={(e) => onCountryChange(e.target.value)} className={`w-full rounded-xl border px-4 py-3 outline-none ${selectClass}`}>{countries.map((country) => <option key={country.id} value={country.id}>{country.flag} {country.name}</option>)}</select></label><label className="space-y-2"><span className={`text-sm font-semibold ${labelClass}`}>{onboarding && <span className="mr-2 text-slate-500">02</span>}City</span><select value={preferences.cityId} onChange={(e) => onCityChange(e.target.value)} className={`w-full rounded-xl border px-4 py-3 outline-none ${selectClass}`}>{availableCities.map((city) => <option key={city.id} value={city.id}>{city.name}</option>)}</select></label></div><div className="mt-6"><span className={`text-sm font-semibold ${labelClass}`}>{onboarding && <span className="mr-2 text-slate-500">03</span>}Sports</span><div className="mt-3 flex flex-wrap gap-2">{sports.map((sport) => { const selected = preferences.sportIds.includes(sport.id); return <button key={sport.id} type="button" onClick={() => onToggleSport(sport.id)} aria-pressed={selected} className={`rounded-full px-4 py-2 text-sm font-semibold transition ${selected ? dark ? "bg-white text-slate-950" : "bg-slate-900 text-white" : dark ? "bg-slate-800 text-slate-300 hover:bg-slate-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}>{selected && onboarding ? "✓ " : ""}{sport.icon} {sport.name}</button>; })}</div></div></>;
+function DashboardMatchList({ status, groups, teamMap, teamSelectionsByCompetition }: { status: LiveStatus; groups: { key: string; label: string; matches: Match[] }[]; teamMap: Map<string, Team>; teamSelectionsByCompetition: Record<string, string[]> }) {
+  const emptyText = status === "loading" ? "Loading games…" : status === "error" ? "Games are temporarily unavailable." : "No games in this period.";
+  return <section>
+    {groups.length === 0 ? <EmptyState text={emptyText} /> : <div className="space-y-7">{groups.map((group) => <div key={group.key}><div className="mb-3 flex items-center gap-3"><h2 className="text-xs font-black uppercase tracking-[0.16em] text-slate-400">{group.label}</h2><div className="h-px flex-1 bg-slate-800" /></div><div className="space-y-3">{group.matches.map((match) => <MatchCard key={match.id} match={match} teamMap={teamMap} selectedTeamIds={teamSelectionsByCompetition[match.competitionId] ?? []} />)}</div></div>)}</div>}
+  </section>;
 }
 
-function MatchCard({ match, sport, teamMap, localTeamIds, result = false }: { match: Match; sport?: (typeof sports)[number]; teamMap: Map<string, Team>; localTeamIds: Set<string>; result?: boolean }) {
+function MatchCard({ match, teamMap, selectedTeamIds }: { match: Match; teamMap: Map<string, Team>; selectedTeamIds: string[] }) {
   const home = teamMap.get(match.homeTeamId);
   const away = teamMap.get(match.awayTeamId);
-  return <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-slate-50 px-4 py-3 text-xs sm:px-5"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700 shadow-sm">{sport?.icon} {sport?.name}</span><span className="font-medium text-slate-500">{match.competition}</span>{match.source.provider === "thesportsdb" && <span className="rounded-full bg-blue-100 px-2 py-1 font-bold text-blue-700">TheSportsDB</span>}</div>{!result && <span className="rounded-full bg-slate-900 px-3 py-1 font-bold text-white">{formatTime(match.date)}</span>}</div><div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-5 sm:gap-6 sm:px-5"><TeamDisplay team={home} local={localTeamIds.has(match.homeTeamId)} align="right" /><div className="min-w-20 text-center sm:min-w-24">{result ? <div className="rounded-xl bg-slate-900 px-3 py-2 text-xl font-black tracking-tight text-white sm:text-2xl">{match.homeScore} - {match.awayScore}</div> : <div><div className="text-xs font-bold uppercase tracking-wider text-slate-400">Kick-off</div><div className="mt-1 text-lg font-black text-slate-900">{formatTime(match.date)}</div></div>}</div><TeamDisplay team={away} local={localTeamIds.has(match.awayTeamId)} align="left" /></div>{match.venue && <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500 sm:px-5">📍 {match.venue}</div>}</article>;
+  const followsAll = selectedTeamIds.length === 0;
+  const hasScore = match.homeScore !== undefined && match.awayScore !== undefined;
+  return <article className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-sm">
+    <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 text-xs sm:px-5"><span className="min-w-0 truncate font-semibold text-slate-400">{match.competition}</span><span className="shrink-0 rounded-full bg-slate-800 px-3 py-1 font-bold text-slate-300">{hasScore ? "Final" : formatTime(match.date)}</span></div>
+    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-5 sm:gap-6 sm:px-5">
+      <TeamDisplay team={home} followed={followsAll || selectedTeamIds.includes(match.homeTeamId)} align="right" />
+      <div className="min-w-20 text-center sm:min-w-24">{hasScore ? <div className="rounded-xl bg-white px-3 py-2 text-xl font-black tracking-tight text-slate-950 sm:text-2xl">{match.homeScore} - {match.awayScore}</div> : <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Kick-off</div><div className="mt-1 text-lg font-black text-white">{formatTime(match.date)}</div></div>}</div>
+      <TeamDisplay team={away} followed={followsAll || selectedTeamIds.includes(match.awayTeamId)} align="left" />
+    </div>
+    {match.venue && <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-500 sm:px-5">📍 {match.venue}</div>}
+  </article>;
 }
 
-function TeamDisplay({ team, local, align }: { team?: Team; local: boolean; align: "left" | "right" }) {
-  return <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}><div className={`font-semibold sm:text-lg ${local ? "text-slate-950" : "text-slate-600"}`}>{team?.name ?? "Unknown team"}</div><div className={`mt-1 flex flex-wrap items-center gap-1.5 ${align === "right" ? "justify-end" : "justify-start"}`}><span className="text-xs text-slate-400">{team?.category}</span>{local && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Local club</span>}</div></div>;
+function TeamDisplay({ team, followed, align }: { team?: Team; followed: boolean; align: "left" | "right" }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const src = normalizeArtworkSrc(team?.imageUrl);
+  const logo = src && !imageFailed
+    ? <img src={src} alt="" onError={() => setImageFailed(true)} className="h-10 w-10 shrink-0 object-contain sm:h-12 sm:w-12" />
+    : <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-800 text-lg sm:h-12 sm:w-12" aria-hidden="true">⚽</div>;
+  return <div className={`flex min-w-0 items-center gap-3 ${align === "right" ? "justify-end" : "justify-start"}`}>
+    {align === "left" && logo}
+    <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}><div className={`truncate font-bold sm:text-lg ${followed ? "text-white" : "text-slate-400"}`}>{team?.name ?? "Unknown team"}</div>{followed && <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-amber-400">★ Following</div>}</div>
+    {align === "right" && logo}
+  </div>;
 }
 
 function EmptyState({ text }: { text: string }) {
-  return <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">{text}</div>;
+  return <div className="rounded-2xl border border-dashed border-slate-700 bg-slate-900/60 p-10 text-center text-sm text-slate-500">{text}</div>;
 }
