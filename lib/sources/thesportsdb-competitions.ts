@@ -11,11 +11,10 @@ export type DiscoveredCompetition = {
 };
 
 // ClubPulse deliberately supports this small competition catalog. Keep this
-// metadata local so a catalog refresh does not spend seven free-tier API calls
-// just rediscovering stable league names and countries.
+// metadata local so a catalog refresh does not spend free-tier API calls just
+// rediscovering stable league names and countries.
 const SUPPORTED_FOOTBALL_COMPETITIONS = [
-  { externalId: "4344", name: "Portuguese Primeira Liga", country: "Portugal" },
-  { externalId: "4662", name: "Portuguese LigaPro", country: "Portugal" },
+  { externalId: "4344", name: "Primeira Liga", country: "Portugal" },
   { externalId: "4510", name: "Taca de Portugal", country: "Portugal" },
   { externalId: "4334", name: "French Ligue 1", country: "France" },
   { externalId: "4401", name: "French Ligue 2", country: "France" },
