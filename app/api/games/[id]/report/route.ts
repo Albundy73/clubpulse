@@ -20,8 +20,8 @@ function normalizeFormation(value?: string) { return value?.match(/\b\d(?:-\d){2
 function formationFromHtml(html: string, startMarker: string, endMarker: string) { return normalizeFormation(decodeHtml(extractSection(html, startMarker, endMarker))); }
 function slug(value: string) { return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); }
 
-async function fallbackReport(match: { date: Date; homeTeamId: string; awayTeamId: string; homeTeam: { name: string }; awayTeam: { name: string } }) {
-  const date = match.date.toISOString().slice(0, 10);
+async function fallbackReport(match: { scheduledAt: Date; homeTeamId: string; awayTeamId: string; homeTeam: { name: string }; awayTeam: { name: string } }) {
+  const date = match.scheduledAt.toISOString().slice(0, 10);
   const candidates = [
     `https://ontourfootball.com/fixtures/${slug(match.homeTeam.name)}-vs-${slug(match.awayTeam.name)}-${date}`,
     `https://www.footballfirst.com/football-live-centre/match-detail/${slug(match.homeTeam.name)}-vs-${slug(match.awayTeam.name)}/lineup`,
