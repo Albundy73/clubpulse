@@ -4,7 +4,20 @@ import { useEffect, useMemo, useState } from "react";
 import type { CompetitionPreferences, Team } from "@/lib/types";
 
 type TeamsPayload = { teams?: Team[] };
-type CompetitionSummary = { id: string; name: string };
+type CompetitionSummary = { id: string; name: string; imageUrl?: string };
+
+function normalizeArtworkSrc(src?: string) {
+  if (!src) return undefined;
+  return `${src.replace(/\/(?:tiny|small|medium|large|original)\/?$/i, "")}/tiny`;
+}
+
+function SummaryLogo({ src }: { src?: string }) {
+  const [failed, setFailed] = useState(false);
+  const image = normalizeArtworkSrc(src);
+  return image && !failed
+    ? <img src={image} alt="" onError={() => setFailed(true)} className="h-7 w-7 shrink-0 object-contain" />
+    : <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-700 text-xs" aria-hidden="true">⚽</span>;
+}
 
 export default function PreferenceTeamSummary({ preferences, competitions }: { preferences: CompetitionPreferences; competitions: CompetitionSummary[] }) {
   const [teamsById, setTeamsById] = useState<Record<string, Team>>({});
@@ -39,8 +52,18 @@ export default function PreferenceTeamSummary({ preferences, competitions }: { p
     return () => controller.abort();
   }, [preferences.competitionIds, preferences.teamIdsByCompetition]);
 
-  return <div className="space-y-3">
-    {allTeamCompetitions.length > 0 && <div className="text-xs text-slate-400">All teams: {allTeamCompetitions.map((competition) => competition.name).join(", ")}</div>}
-    {selectedIds.length > 0 ? <div className="flex flex-wrap gap-2">{selectedIds.map((teamId) => <span key={teamId} className="rounded-full bg-slate-700 px-2.5 py-1 text-sm font-semibold">★ {teamsById[teamId]?.name ?? "Loading…"}</span>)}</div> : allTeamCompetitions.length === 0 ? <span className="text-sm text-slate-500">No teams selected</span> : null}
+  return <div className="space-y-2">
+    {allTeamCompetitions.map((competition) => <div key={competition.id} className="flex items-center gap-3 rounded-xl bg-slate-900/55 px-3 py-2">
+      <SummaryLogo src={competition.imageUrl} />
+      <div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-200">{competition.name}</div><div className="text-[11px] text-slate-500">All teams</div></div>
+    </div>)}
+    {selectedIds.map((teamId) => {
+      const team = teamsById[teamId];
+      return <div key={teamId} className="flex items-center gap-3 rounded-xl bg-slate-900/55 px-3 py-2">
+        <SummaryLogo src={team?.imageUrl} />
+        <span className="min-w-0 truncate text-sm font-semibold text-slate-200">{team?.name ?? "Loading…"}</span>
+      </div>;
+    })}
+    {selectedIds.length === 0 && allTeamCompetitions.length === 0 && <span className="text-sm text-slate-500">No teams selected</span>}
   </div>;
 }
