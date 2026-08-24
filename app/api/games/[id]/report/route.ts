@@ -50,12 +50,17 @@ function decodeHtml(value: string) {
     .trim();
 }
 
-function extractPublicLineup(html: string, startMarker: string, endMarker: string, teamId: string, teamName: string) {
-  const start = html.toLowerCase().indexOf(startMarker.toLowerCase());
-  const end = start >= 0 ? html.toLowerCase().indexOf(endMarker.toLowerCase(), start + startMarker.length) : -1;
-  if (start < 0 || end < 0) return [] as ReportPlayer[];
+function extractSection(html: string, startMarker: string, endMarker: string) {
+  const lower = html.toLowerCase();
+  const start = lower.indexOf(startMarker.toLowerCase());
+  const end = start >= 0 ? lower.indexOf(endMarker.toLowerCase(), start + startMarker.length) : -1;
+  return start >= 0 && end >= 0 ? html.slice(start, end) : "";
+}
 
-  const section = html.slice(start, end);
+function extractPublicLineup(html: string, startMarker: string, endMarker: string, teamId: string, teamName: string) {
+  const section = extractSection(html, startMarker, endMarker);
+  if (!section) return [] as ReportPlayer[];
+
   const players: ReportPlayer[] = [];
   const anchorPattern = /<a\b[^>]*href=["'][^"']*\/player\/[^"']+["'][^>]*>([\s\S]*?)<\/a>/gi;
   let match: RegExpExecArray | null;
@@ -69,6 +74,17 @@ function extractPublicLineup(html: string, startMarker: string, endMarker: strin
     }
   }
   return players;
+}
+
+function normalizeFormation(value?: string) {
+  if (!value) return undefined;
+  const match = value.match(/\b\d(?:-\d){2,4}\b/);
+  return match?.[0];
+}
+
+function formationFromHtml(html: string, startMarker: string, endMarker: string) {
+  const section = decodeHtml(extractSection(html, startMarker, endMarker));
+  return normalizeFormation(section);
 }
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -118,7 +134,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     player: text(row, "strPlayer", "strPlayerName") ?? "Unknown player",
     number: text(row, "intSquadNumber", "strNumber"),
     position: text(row, "strPosition"),
-    role: text(row, "strSubstitute", "strRole", "strFormation") ?? "",
+    role: text(row, "strSubstitute", "strRole") ?? "",
   }));
 
   const publicLineups = match ? [
@@ -135,10 +151,24 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   }));
   const lineups = Array.from(new Map(combined.map((player) => [`${player.teamId ?? player.teamName}:${player.player.toLocaleLowerCase()}`, player])).values());
 
+  const formations: Record<string, string> = {};
+  for (const row of lineupRows) {
+    const teamId = localTeamId(text(row, "idTeam"));
+    const formation = normalizeFormation(text(row, "strFormation", "strTeamFormation", "strFormationName"));
+    if (teamId && formation && !formations[teamId]) formations[teamId] = formation;
+  }
+  if (match) {
+    formations[match.homeTeamId] ||= formationFromHtml(eventHtml, "Home Team Lineup", "Away Team Lineup") ?? "";
+    formations[match.awayTeamId] ||= formationFromHtml(eventHtml, "Away Team Lineup", "Event Statistics") ?? "";
+    if (!formations[match.homeTeamId]) delete formations[match.homeTeamId];
+    if (!formations[match.awayTeamId]) delete formations[match.awayTeamId];
+  }
+
   return NextResponse.json({
     goals,
     statistics,
     lineups,
+    formations,
     availability: { goals: goals.length > 0, statistics: statistics.length > 0, lineups: lineups.length > 0 },
     lineupSource: publicLineups.length > apiLineups.length ? "public-event-page+api" : "api",
   });
