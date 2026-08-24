@@ -9,7 +9,6 @@ type Props = { competitions: CompetitionSummary[]; selectedCompetitionIds: strin
 
 function normalizeArtworkSrc(src?: string) {
   if (!src) return undefined;
-  // TheSportsDB may persist a sized URL; always render from the canonical base.
   const base = src.replace(/\/(?:tiny|small|medium|large|original)\/?$/i, "");
   return `${base}/tiny`;
 }
@@ -23,16 +22,15 @@ function Artwork({ src, fallback, size = "h-8 w-8" }: { src?: string; fallback: 
 }
 
 export default function TeamPreferenceAccordion({ competitions, selectedCompetitionIds, selectedTeamIdsByCompetition, onToggleCompetition, onToggleTeam, onFollowAllTeams, dark = false }: Props) {
-  const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [teamsByCompetition, setTeamsByCompetition] = useState<Record<string, Team[]>>({});
   const [loadingIds, setLoadingIds] = useState<string[]>([]);
   const [errorIds, setErrorIds] = useState<string[]>([]);
   const [searchByCompetition, setSearchByCompetition] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    const validIds = new Set(competitions.map((competition) => competition.id));
-    setExpandedIds((current) => current.filter((id) => validIds.has(id)));
-  }, [competitions]);
+    if (expandedId && !competitions.some((competition) => competition.id === expandedId)) setExpandedId(null);
+  }, [competitions, expandedId]);
 
   async function ensureTeamsLoaded(competitionId: string) {
     if (teamsByCompetition[competitionId] || loadingIds.includes(competitionId)) return;
@@ -54,16 +52,12 @@ export default function TeamPreferenceAccordion({ competitions, selectedCompetit
   }
 
   function toggleExpanded(competitionId: string) {
-    setExpandedIds((current) => {
-      const expanding = !current.includes(competitionId);
-      if (expanding) void ensureTeamsLoaded(competitionId);
-      return expanding ? [...current, competitionId] : current.filter((id) => id !== competitionId);
-    });
+    const expanding = expandedId !== competitionId;
+    if (expanding) void ensureTeamsLoaded(competitionId);
+    setExpandedId(expanding ? competitionId : null);
   }
 
   function toggleTeam(competitionId: string, teamId: string, followed: boolean) {
-    // A user can favorite a team directly. The competition is activated in the
-    // background so match filtering has the competition context it needs.
     if (!followed) onToggleCompetition(competitionId);
     onToggleTeam(competitionId, teamId);
   }
@@ -74,7 +68,7 @@ export default function TeamPreferenceAccordion({ competitions, selectedCompetit
     <div className={`mb-2 text-xs font-bold uppercase tracking-wider ${dark ? "text-slate-500" : "text-slate-400"}`}>{country}</div>
     <div className="space-y-2">{competitions.filter((competition) => (competition.country ?? "International") === country).map((competition) => {
       const followed = selectedCompetitionIds.includes(competition.id);
-      const expanded = expandedIds.includes(competition.id);
+      const expanded = expandedId === competition.id;
       const teams = teamsByCompetition[competition.id] ?? [];
       const selectedIds = selectedTeamIdsByCompetition[competition.id] ?? [];
       const selectedSet = new Set(selectedIds);
