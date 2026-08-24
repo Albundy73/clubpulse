@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+function displayName(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   try {
@@ -15,10 +23,10 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ id
       teams: memberships.map(({ team }) => ({
         id: team.id,
         clubId: team.clubId,
-        name: team.name,
+        name: displayName(team.name),
         category: team.category,
         imageUrl: team.imageUrl ?? undefined,
-        clubName: team.club.name,
+        clubName: displayName(team.club.name),
         source: { provider: team.sourceProvider ?? "clubpulse-db", externalId: team.sourceExternalId ?? team.id, url: team.sourceUrl ?? undefined },
       })),
     });
