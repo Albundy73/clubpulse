@@ -75,6 +75,7 @@ export async function GET(request: NextRequest) {
         clubId: string;
         name: string;
         category: string;
+        imageUrl?: string;
         source: { provider: string; externalId: string; url?: string };
       }
     >();
@@ -87,6 +88,7 @@ export async function GET(request: NextRequest) {
           clubId: team.clubId,
           name: team.name,
           category: team.category,
+          imageUrl: team.imageUrl ?? undefined,
           source: {
             provider: team.sourceProvider ?? "clubpulse-db",
             externalId: team.sourceExternalId ?? team.id,
