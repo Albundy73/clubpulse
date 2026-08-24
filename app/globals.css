@@ -113,3 +113,50 @@ aside.lg\:sticky > .mt-5.space-y-5 > div:nth-child(2) > .text-xs.text-slate-400 
     right: 0;
   }
 }
+
+/* Game detail section selector: keep navigation light and text-led. */
+nav[aria-label="Game details"] {
+  display: flex !important;
+  justify-content: center;
+  gap: 2rem;
+  overflow: visible !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+nav[aria-label="Game details"] button {
+  position: relative;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0.35rem 0.1rem !important;
+  color: rgb(148 163 184) !important;
+  font-weight: 500 !important;
+}
+
+nav[aria-label="Game details"] button > span:first-child {
+  font-size: 0.95rem !important;
+  font-weight: inherit !important;
+}
+
+nav[aria-label="Game details"] button > span:last-child {
+  display: none !important;
+}
+
+nav[aria-label="Game details"] button[aria-pressed="true"] {
+  color: white !important;
+  font-weight: 800 !important;
+}
+
+nav[aria-label="Game details"] button[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.15rem;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+}
