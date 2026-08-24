@@ -92,8 +92,9 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const externalId = id.replace(/^thesportsdb-event-/, "");
   if (!/^\d+$/.test(externalId)) return NextResponse.json({ error: "Unsupported game source." }, { status: 400 });
 
-  const [{ prisma }, timelineRows, statRows, lineupRows, eventHtml] = await Promise.all([
+  const [{ prisma }, eventRows, timelineRows, statRows, lineupRows, eventHtml] = await Promise.all([
     import("@/lib/db"),
+    fetchRows(`lookupevent.php?id=${externalId}`, ["events", "event"]),
     fetchRows(`lookuptimeline.php?id=${externalId}`, ["timeline", "eventtimeline"]),
     fetchRows(`lookupeventstats.php?id=${externalId}`, ["eventstats", "stats"]),
     fetchRows(`lookuplineup.php?id=${externalId}`, ["lineup", "eventlineup"]),
@@ -152,6 +153,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const lineups = Array.from(new Map(combined.map((player) => [`${player.teamId ?? player.teamName}:${player.player.toLocaleLowerCase()}`, player])).values());
 
   const formations: Record<string, string> = {};
+  const event = eventRows[0];
+  if (match && event) {
+    const homeFormation = normalizeFormation(text(event, "strHomeFormation", "strFormationHome", "strHomeLineupFormation"));
+    const awayFormation = normalizeFormation(text(event, "strAwayFormation", "strFormationAway", "strAwayLineupFormation"));
+    if (homeFormation) formations[match.homeTeamId] = homeFormation;
+    if (awayFormation) formations[match.awayTeamId] = awayFormation;
+  }
   for (const row of lineupRows) {
     const teamId = localTeamId(text(row, "idTeam"));
     const formation = normalizeFormation(text(row, "strFormation", "strTeamFormation", "strFormationName"));
