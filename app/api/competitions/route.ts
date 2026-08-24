@@ -3,6 +3,10 @@ import { SUPPORTED_FOOTBALL_COMPETITION_IDS } from "@/lib/sources/thesportsdb-co
 
 export const dynamic = "force-dynamic";
 
+const DISPLAY_NAMES: Record<string, string> = {
+  "thesportsdb-league-4344": "Primeira Liga",
+};
+
 export async function GET() {
   try {
     const { prisma } = await import("@/lib/db");
@@ -15,7 +19,7 @@ export async function GET() {
       source: "ClubPulse PostgreSQL",
       competitions: competitions.map((competition) => ({
         id: competition.id,
-        name: competition.name,
+        name: DISPLAY_NAMES[competition.id] ?? competition.name,
         season: competition.season ?? undefined,
         imageUrl: competition.imageUrl ?? undefined,
         sportId: competition.sportId,
