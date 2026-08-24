@@ -33,14 +33,30 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const externalId = id.replace(/^thesportsdb-event-/, "");
   if (!/^\d+$/.test(externalId)) return NextResponse.json({ error: "Unsupported game source." }, { status: 400 });
 
-  const [timelineRows, statRows, lineupRows] = await Promise.all([
+  const [{ prisma }, timelineRows, statRows, lineupRows] = await Promise.all([
+    import("@/lib/db"),
     fetchRows(`lookuptimeline.php?id=${externalId}`, ["timeline", "eventtimeline"]),
     fetchRows(`lookupeventstats.php?id=${externalId}`, ["eventstats", "stats"]),
     fetchRows(`lookuplineup.php?id=${externalId}`, ["lineup", "eventlineup"]),
   ]);
 
+  const match = await prisma.match.findFirst({
+    where: {
+      OR: [
+        { id },
+        { sourceProvider: "thesportsdb", sourceExternalId: externalId },
+      ],
+    },
+    include: { homeTeam: true, awayTeam: true },
+  });
+
+  const providerToLocalTeamId = new Map<string, string>();
+  if (match?.homeTeam.sourceExternalId) providerToLocalTeamId.set(match.homeTeam.sourceExternalId, match.homeTeamId);
+  if (match?.awayTeam.sourceExternalId) providerToLocalTeamId.set(match.awayTeam.sourceExternalId, match.awayTeamId);
+  const localTeamId = (providerId?: string) => providerId ? providerToLocalTeamId.get(providerId) ?? providerId : undefined;
+
   const goals = timelineRows.filter((row) => (text(row, "strTimeline", "strType", "strEvent") ?? "").toLowerCase().includes("goal")).map((row) => ({
-    teamId: text(row, "idTeam"),
+    teamId: localTeamId(text(row, "idTeam")),
     teamName: text(row, "strTeam"),
     player: text(row, "strPlayer", "strPlayerName") ?? "Goal",
     minute: text(row, "intTime", "strTime", "strTimelineDetail") ?? "",
@@ -53,7 +69,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   })).filter((row) => row.home !== "—" || row.away !== "—");
 
   const lineups = lineupRows.map((row) => ({
-    teamId: text(row, "idTeam"),
+    teamId: localTeamId(text(row, "idTeam")),
     teamName: text(row, "strTeam"),
     player: text(row, "strPlayer", "strPlayerName") ?? "Unknown player",
     number: text(row, "intSquadNumber", "strNumber"),
