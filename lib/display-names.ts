@@ -2,7 +2,7 @@ const COMPETITION_NAMES_BY_EXTERNAL_ID: Record<string, string> = {
   "4344": "Primeira Liga",
   "4510": "Taça de Portugal",
   "4334": "Ligue 1",
-  "4401": "Ligue 2",
+  "4484": "Coupe de France",
   "4480": "UEFA Champions League",
   "4481": "UEFA Europa League",
 };
