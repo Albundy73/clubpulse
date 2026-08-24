@@ -308,15 +308,15 @@ function MatchCard({ match, teamMap, selectedTeamIds }: { match: Match; teamMap:
   const away = teamMap.get(match.awayTeamId);
   const followsAll = selectedTeamIds.length === 0;
   const hasScore = match.homeScore !== undefined && match.awayScore !== undefined;
-  return <article className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-sm">
-    <div className="flex items-center justify-between gap-3 border-b border-slate-800 px-4 py-3 text-xs sm:px-5"><span className="min-w-0 truncate font-semibold text-slate-400">{match.competition}</span><span className="shrink-0 rounded-full bg-slate-800 px-3 py-1 font-bold text-slate-300">{hasScore ? "Final" : formatTime(match.date)}</span></div>
+  return <a href={`/game/${encodeURIComponent(match.id)}`} className="block overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-sm transition hover:border-slate-700 hover:bg-slate-900/90">
+    <div className="border-b border-slate-800 px-4 py-3 text-xs sm:px-5"><span className="min-w-0 truncate font-semibold text-slate-400">{match.competition}</span></div>
     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-5 sm:gap-6 sm:px-5">
       <TeamDisplay team={home} followed={followsAll || selectedTeamIds.includes(match.homeTeamId)} align="right" />
       <div className="min-w-20 text-center sm:min-w-24">{hasScore ? <div className="rounded-xl bg-white px-3 py-2 text-xl font-black tracking-tight text-slate-950 sm:text-2xl">{match.homeScore} - {match.awayScore}</div> : <div><div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Kick-off</div><div className="mt-1 text-lg font-black text-white">{formatTime(match.date)}</div></div>}</div>
       <TeamDisplay team={away} followed={followsAll || selectedTeamIds.includes(match.awayTeamId)} align="left" />
     </div>
     {match.venue && <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-500 sm:px-5">📍 {match.venue}</div>}
-  </article>;
+  </a>;
 }
 
 function TeamDisplay({ team, followed, align }: { team?: Team; followed: boolean; align: "left" | "right" }) {
@@ -327,7 +327,7 @@ function TeamDisplay({ team, followed, align }: { team?: Team; followed: boolean
     : <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-800 text-lg sm:h-12 sm:w-12" aria-hidden="true">⚽</div>;
   return <div className={`flex min-w-0 items-center gap-3 ${align === "right" ? "justify-end" : "justify-start"}`}>
     {align === "left" && logo}
-    <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}><div className={`truncate font-bold sm:text-lg ${followed ? "text-white" : "text-slate-400"}`}>{team?.name ?? "Unknown team"}</div>{followed && <div className="mt-1 text-[10px] font-bold uppercase tracking-wider text-amber-400">★ Following</div>}</div>
+    <div className={`min-w-0 ${align === "right" ? "text-right" : "text-left"}`}><div className={`truncate font-bold sm:text-lg ${followed ? "text-white" : "text-slate-400"}`}>{team?.name ?? "Unknown team"}{followed && <span className="ml-1 text-amber-400">★</span>}</div></div>
     {align === "right" && logo}
   </div>;
 }
