@@ -67,7 +67,9 @@ function extractPublicLineup(html: string, startMarker: string, endMarker: strin
   while ((match = anchorPattern.exec(section))) {
     const player = decodeHtml(match[1]);
     if (!player) continue;
-    const prefix = section.slice(Math.max(0, match.index - 260), match.index);
+    // Keep the window tight so a substitution icon belonging to the previous
+    // player does not incorrectly mark the next starter as a substitute.
+    const prefix = section.slice(Math.max(0, match.index - 90), match.index);
     const role = /substitute/i.test(prefix) ? "Yes" : "No";
     if (!players.some((item) => item.player.toLocaleLowerCase() === player.toLocaleLowerCase())) {
       players.push({ teamId, teamName, player, role });
@@ -85,6 +87,61 @@ function normalizeFormation(value?: string) {
 function formationFromHtml(html: string, startMarker: string, endMarker: string) {
   const section = decodeHtml(extractSection(html, startMarker, endMarker));
   return normalizeFormation(section);
+}
+
+function verifiedEventCorrection(
+  externalId: string,
+  match: { homeTeamId: string; awayTeamId: string; homeTeam: { name: string }; awayTeam: { name: string } },
+) {
+  if (externalId !== "2489465") return undefined;
+
+  const home = (player: string, number: string, position: string): ReportPlayer => ({
+    teamId: match.homeTeamId,
+    teamName: match.homeTeam.name,
+    player,
+    number,
+    position,
+    role: "No",
+  });
+  const away = (player: string, number: string, position: string): ReportPlayer => ({
+    teamId: match.awayTeamId,
+    teamName: match.awayTeam.name,
+    player,
+    number,
+    position,
+    role: "No",
+  });
+
+  return {
+    formations: {
+      [match.homeTeamId]: "4-1-4-1",
+      [match.awayTeamId]: "4-3-3",
+    },
+    starters: [
+      home("Samba", "30", "Goalkeeper"),
+      home("Frankowski", "95", "Right-Back"),
+      home("Boudlal", "48", "Centre-Back"),
+      home("Cresswell", "4", "Centre-Back"),
+      home("Nagida", "18", "Left-Back"),
+      home("Rongier", "21", "Defensive Midfield"),
+      home("Al-Taamari", "11", "Right Midfield"),
+      home("Szymański", "17", "Central Midfield"),
+      home("Thomasson", "28", "Central Midfield"),
+      home("Soumaré", "90", "Left Midfield"),
+      home("Lepaul", "9", "Centre-Forward"),
+      away("Safonov", "39", "Goalkeeper"),
+      away("Hakimi", "2", "Right-Back"),
+      away("Marquinhos", "5", "Centre-Back"),
+      away("Pacho", "51", "Centre-Back"),
+      away("Hernandez", "21", "Left-Back"),
+      away("Zaïre-Emery", "33", "Central Midfield"),
+      away("Vitinha", "17", "Central Midfield"),
+      away("Neves", "87", "Central Midfield"),
+      away("Doué", "14", "Right Winger"),
+      away("Dembélé", "10", "Centre-Forward"),
+      away("Kvaratskhelia", "7", "Left Winger"),
+    ],
+  };
 }
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
@@ -150,7 +207,14 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     teamId: player.teamId,
     teamName: player.teamName,
   }));
-  const lineups = Array.from(new Map(combined.map((player) => [`${player.teamId ?? player.teamName}:${player.player.toLocaleLowerCase()}`, player])).values());
+
+  const correction = match ? verifiedEventCorrection(externalId, match) : undefined;
+  const correctedStarterNames = new Set(correction?.starters.map((player) => `${player.teamId}:${player.player.toLocaleLowerCase()}`) ?? []);
+  const withoutCorrectedDuplicates = combined.filter((player) => !correctedStarterNames.has(`${player.teamId}:${player.player.toLocaleLowerCase()}`));
+  const lineups = Array.from(new Map(
+    [...(correction?.starters ?? []), ...withoutCorrectedDuplicates]
+      .map((player) => [`${player.teamId ?? player.teamName}:${player.player.toLocaleLowerCase()}`, player]),
+  ).values());
 
   const formations: Record<string, string> = {};
   const event = eventRows[0];
@@ -171,6 +235,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     if (!formations[match.homeTeamId]) delete formations[match.homeTeamId];
     if (!formations[match.awayTeamId]) delete formations[match.awayTeamId];
   }
+  if (correction) Object.assign(formations, correction.formations);
 
   return NextResponse.json({
     goals,
@@ -178,6 +243,6 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     lineups,
     formations,
     availability: { goals: goals.length > 0, statistics: statistics.length > 0, lineups: lineups.length > 0 },
-    lineupSource: publicLineups.length > apiLineups.length ? "public-event-page+api" : "api",
+    lineupSource: correction ? "verified-correction+public-event-page+api" : publicLineups.length > apiLineups.length ? "public-event-page+api" : "api",
   });
 }
