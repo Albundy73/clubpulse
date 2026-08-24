@@ -65,6 +65,11 @@ function numericStat(value: string) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function isSubstitute(role: string) {
+  const value = role.trim().toLowerCase();
+  return value === "yes" || value === "true" || value === "1" || value.includes("sub");
+}
+
 function TeamLogo({ team, size = "h-12 w-12" }: { team?: Team; size?: string }) {
   const [failed, setFailed] = useState(false);
   const src = normalizeArtworkSrc(team?.imageUrl);
@@ -95,7 +100,7 @@ function StatisticRow({ label, home, away }: { label: string; home: string; away
       <span className="text-center text-slate-400">{label}</span>
       <strong className="text-white">{away}</strong>
     </div>
-    <div className="relative mt-3 h-2 overflow-visible rounded-full bg-slate-800" aria-hidden="true">
+    <div className="relative mt-3 h-2 rounded-full bg-slate-800" aria-hidden="true">
       <div className="absolute inset-y-0 left-0 rounded-l-full bg-sky-400" style={{ width: `${homePercent}%` }} />
       <div className="absolute inset-y-0 right-0 rounded-r-full bg-amber-400" style={{ width: `${100 - homePercent}%` }} />
       <div className="absolute top-1/2 h-4 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_2px_rgba(15,23,42,0.75)]" style={{ left: `${homePercent}%` }} />
@@ -103,27 +108,86 @@ function StatisticRow({ label, home, away }: { label: string; home: string; away
   </div>;
 }
 
-function Lineup({ title, players }: { title: string; players: ReportPlayer[] }) {
-  const isSub = (role: string) => {
-    const value = role.trim().toLowerCase();
-    return value === "yes" || value === "true" || value === "1" || value.includes("sub");
-  };
-  const starters = players.filter((player) => !isSub(player.role));
-  const substitutes = players.filter((player) => isSub(player.role));
+type PitchRole = "goalkeeper" | "defence" | "midfield" | "attack";
 
-  const group = (label: string, items: ReportPlayer[]) => <div className="mt-4">
-    <div className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">{label}</div>
-    {items.length ? items.map((player, index) => <div key={`${player.player}-${index}`} className="flex items-center gap-3 border-t border-slate-800 py-2 text-sm">
-      <span className="w-6 text-right text-slate-500">{player.number ?? ""}</span>
-      <span className="font-semibold text-slate-200">{player.player}</span>
-      {player.position && <span className="ml-auto text-xs text-slate-500">{player.position}</span>}
-    </div>) : <div className="border-t border-slate-800 py-3 text-xs text-slate-600">No players supplied.</div>}
+function pitchRole(position?: string): PitchRole {
+  const value = (position ?? "").toLowerCase();
+  if (value.includes("goalkeeper") || value === "gk") return "goalkeeper";
+  if (value.includes("back") || value.includes("defender") || value.includes("defence")) return "defence";
+  if (value.includes("midfield") || value.includes("midfielder")) return "midfield";
+  if (value.includes("winger") || value.includes("forward") || value.includes("striker") || value.includes("attack")) return "attack";
+  return "midfield";
+}
+
+function displayPlayerName(name: string) {
+  const parts = name.trim().split(/\s+/);
+  return parts.length > 1 ? `${parts[0][0]}. ${parts.slice(1).join(" ")}` : name;
+}
+
+function spreadPlayers(players: ReportPlayer[], y: number) {
+  if (!players.length) return [] as { player: ReportPlayer; x: number; y: number }[];
+  return players.map((player, index) => ({
+    player,
+    x: ((index + 1) / (players.length + 1)) * 100,
+    y,
+  }));
+}
+
+function PitchPlayer({ player, x, y, tone }: { player: ReportPlayer; x: number; y: number; tone: "home" | "away" }) {
+  return <div className="absolute z-10 -translate-x-1/2 -translate-y-1/2 text-center" style={{ left: `${x}%`, top: `${y}%` }}>
+    <div className={`mx-auto flex h-9 w-9 items-center justify-center rounded-full border-2 border-white/80 text-xs font-black text-white shadow-lg ${tone === "home" ? "bg-sky-700" : "bg-amber-600"}`}>
+      {player.number ?? "•"}
+    </div>
+    <div className="mt-1 max-w-24 truncate rounded bg-slate-950/75 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm sm:text-[11px]">
+      {displayPlayerName(player.player)}
+    </div>
   </div>;
+}
 
-  return <div className="border-slate-800 p-5 md:first:border-r">
-    <h3 className="font-black">{title}</h3>
-    {group("Starting XI", starters)}
-    {substitutes.length > 0 && group("Substitutes", substitutes)}
+function TeamPitch({ title, players, tone }: { title: string; players: ReportPlayer[]; tone: "home" | "away" }) {
+  const starters = players.filter((player) => !isSubstitute(player.role)).slice(0, 11);
+  const substitutes = players.filter((player) => isSubstitute(player.role));
+  const grouped = {
+    goalkeeper: starters.filter((player) => pitchRole(player.position) === "goalkeeper"),
+    defence: starters.filter((player) => pitchRole(player.position) === "defence"),
+    midfield: starters.filter((player) => pitchRole(player.position) === "midfield"),
+    attack: starters.filter((player) => pitchRole(player.position) === "attack"),
+  };
+
+  const known = new Set([...grouped.goalkeeper, ...grouped.defence, ...grouped.midfield, ...grouped.attack]);
+  const unplaced = starters.filter((player) => !known.has(player));
+  grouped.midfield.push(...unplaced);
+
+  const positions = [
+    ...spreadPlayers(grouped.goalkeeper.length ? grouped.goalkeeper : starters.slice(0, 1), 88),
+    ...spreadPlayers(grouped.defence, 68),
+    ...spreadPlayers(grouped.midfield, 43),
+    ...spreadPlayers(grouped.attack, 18),
+  ];
+
+  return <div className="min-w-0">
+    <div className="mb-3 flex items-center justify-between gap-3">
+      <h3 className="font-black text-white">{title}</h3>
+      <span className="text-xs font-semibold text-slate-500">Starting XI</span>
+    </div>
+    <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-emerald-400/30 bg-emerald-900/80 shadow-inner">
+      <div className="absolute inset-3 rounded-lg border-2 border-white/25" />
+      <div className="absolute left-3 right-3 top-1/2 border-t-2 border-white/20" />
+      <div className="absolute left-1/2 top-1/2 h-20 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/20" />
+      <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/30" />
+      <div className="absolute left-1/2 top-3 h-14 w-40 -translate-x-1/2 border-x-2 border-b-2 border-white/20" />
+      <div className="absolute bottom-3 left-1/2 h-14 w-40 -translate-x-1/2 border-x-2 border-t-2 border-white/20" />
+      {positions.map(({ player, x, y }, index) => <PitchPlayer key={`${player.player}-${index}`} player={player} x={x} y={y} tone={tone} />)}
+    </div>
+    {substitutes.length > 0 && <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+      <div className="mb-2 text-[10px] font-black uppercase tracking-wider text-slate-500">Substitutes</div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {substitutes.map((player, index) => <div key={`${player.player}-${index}`} className="flex min-w-0 items-center gap-2 text-xs text-slate-300">
+          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-bold text-white ${tone === "home" ? "bg-sky-700" : "bg-amber-600"}`}>{player.number ?? "•"}</span>
+          <span className="truncate">{player.player}</span>
+        </div>)}
+      </div>
+    </div>}
   </div>;
 }
 
@@ -201,7 +265,7 @@ export default function GameDetail({ gameId }: { gameId: string }) {
 
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
           <h2 className="border-b border-slate-800 px-5 py-4 text-lg font-black">Lineups</h2>
-          {!report ? <div className="p-8 text-sm text-slate-500">Loading lineups…</div> : report.lineups?.length ? <div className="grid gap-0 md:grid-cols-2"><Lineup title={home?.name ?? "Home"} players={lineupFor(match.homeTeamId, home?.name)} /><Lineup title={away?.name ?? "Away"} players={lineupFor(match.awayTeamId, away?.name)} /></div> : <div className="p-8 text-sm text-slate-500">Lineups are not available from the provider for this game.</div>}
+          {!report ? <div className="p-8 text-sm text-slate-500">Loading lineups…</div> : report.lineups?.length ? <div className="grid gap-6 p-5 lg:grid-cols-2"><TeamPitch title={home?.name ?? "Home"} players={lineupFor(match.homeTeamId, home?.name)} tone="home" /><TeamPitch title={away?.name ?? "Away"} players={lineupFor(match.awayTeamId, away?.name)} tone="away" /></div> : <div className="p-8 text-sm text-slate-500">Lineups are not available from the provider for this game.</div>}
         </section>
       </>}
 
