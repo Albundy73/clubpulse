@@ -31,16 +31,17 @@ async function run(request: NextRequest) {
       const { prisma } = await import("@/lib/db");
       const start = new Date();
       start.setUTCHours(0, 0, 0, 0);
+      start.setUTCDate(start.getUTCDate() - 1);
       const end = new Date(start);
-      end.setUTCDate(end.getUTCDate() + 1);
-      const todayMatches = await prisma.match.findMany({
+      end.setUTCDate(end.getUTCDate() + 2);
+      const recentMatches = await prisma.match.findMany({
         where: { scheduledAt: { gte: start, lt: end } },
         include: { competition: true, homeTeam: true, awayTeam: true },
         orderBy: { scheduledAt: "asc" },
       });
       console.info(
-        "Preview today's ingested matches",
-        todayMatches.map((match) => ({
+        "Preview recent ingested matches",
+        recentMatches.map((match) => ({
           eventId: match.sourceExternalId,
           competition: match.competition.name,
           home: match.homeTeam.name,
