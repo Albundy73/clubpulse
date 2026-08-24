@@ -98,8 +98,6 @@ function extractCanonicalTeamLinks(html: string) {
   const teamById = new Map<string, SportsDbTeam>();
   const add = (idTeam: string, slug: string, body: string) => {
     const strTeam = teamNameFromAnchor(body, slug);
-    // Only trust artwork that is inside the team's own anchor. The previous
-    // nearest-image heuristic could assign one badge to neighboring teams.
     const strBadge = artworkFromHtml(body, "team");
     if (idTeam && strTeam) teamById.set(idTeam, { idTeam, strTeam, strSport: "Soccer", strBadge, pageSlug: slug });
   };
@@ -160,13 +158,13 @@ function addTeam(teamById: Map<string, SportsDbTeam>, team: SportsDbTeam | undef
   } : { ...team, strTeam: normalizeDisplayName(team.strTeam) });
 }
 
-async function enrichMissingTeamArtwork(teamById: Map<string, SportsDbTeam>) {
-  const missing = Array.from(teamById.values()).filter((team) => !team.strBadge);
+async function enrichCanonicalTeamArtwork(teamById: Map<string, SportsDbTeam>) {
+  const teams = Array.from(teamById.values());
   let enriched = 0;
   const batchSize = 8;
 
-  for (let offset = 0; offset < missing.length; offset += batchSize) {
-    const batch = missing.slice(offset, offset + batchSize);
+  for (let offset = 0; offset < teams.length; offset += batchSize) {
+    const batch = teams.slice(offset, offset + batchSize);
     const pages = await Promise.all(batch.map((team) => {
       const slug = team.pageSlug || slugify(team.strTeam);
       return fetchHtml(`${SITE_BASE_URL}/team/${team.idTeam}-${slug}`);
@@ -232,7 +230,10 @@ async function fetchCompetitionTeams(competition: (typeof SUPPORTED_FOOTBALL_COM
   competitionBadgeUrl ??= await fetchCompetitionBadge(competition);
   if (competitionBadgeUrl) sources.push("league-profile-artwork");
 
-  const teamArtworkEnriched = await enrichMissingTeamArtwork(teamById);
+  // Team profile pages are authoritative for artwork. Always re-resolve them on
+  // a manual catalog refresh so a stale or neighboring season-page badge can be
+  // corrected, not just filled when missing.
+  const teamArtworkEnriched = await enrichCanonicalTeamArtwork(teamById);
   if (teamArtworkEnriched > 0) sources.push(`team-profile-artwork:${teamArtworkEnriched}`);
 
   const teams = Array.from(teamById.values()).sort((a, b) => a.strTeam.localeCompare(b.strTeam));
